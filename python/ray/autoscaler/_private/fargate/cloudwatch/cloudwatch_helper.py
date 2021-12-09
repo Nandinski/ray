@@ -550,27 +550,6 @@ class CloudwatchHelper:
             else default_instance_profile_name
 
     @staticmethod
-    def resolve_task_definition_name(
-            config: Dict[str, Any], default_task_definition_name: str) -> str:
-        """Get default cloudwatch task definition name.
-
-        Args:
-            config: provider section of cluster config file.
-            default_task_definition_name: default ray task definition name.
-
-        Returns:
-            default cloudwatch task definition name if cloudwatch config file
-                exists.
-            default ray instance task definition name if cloudwatch config file
-                doesn't exist.
-        """
-        cwa_cfg_exists = CloudwatchHelper.cloudwatch_config_exists(
-            config, "config")
-        return CLOUDWATCH_RAY_TASK_DEFINITION_PROFILE if cwa_cfg_exists \
-            else default_task_definition_name
-
-
-    @staticmethod
     def resolve_iam_role_name(config: Dict[str, Any],
                               default_iam_role_name: str) -> str:
         """Get default cloudwatch iam role name.

@@ -166,6 +166,7 @@ ray_files.append("ray/nightly-wheels.yaml")
 
 # Autoscaler files.
 ray_files += [
+    "ray/autoscaler/fargate/defaults.yaml",
     "ray/autoscaler/aws/defaults.yaml",
     "ray/autoscaler/aws/cloudwatch/prometheus.yml",
     "ray/autoscaler/aws/cloudwatch/ray_prometheus_waiter.sh",

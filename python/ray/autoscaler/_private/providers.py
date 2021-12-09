@@ -28,6 +28,9 @@ def _import_aws(provider_config):
     from ray.autoscaler._private.aws.node_provider import AWSNodeProvider
     return AWSNodeProvider
 
+def _import_fargate(provider_config):
+    from ray.autoscaler._private.fargate.node_provider import FargateNodeProvider
+    return FargateNodeProvider
 
 def _import_gcp(provider_config):
     from ray.autoscaler._private.gcp.node_provider import GCPNodeProvider
@@ -95,6 +98,10 @@ def _load_aws_defaults_config():
     import ray.autoscaler.aws as ray_aws
     return os.path.join(os.path.dirname(ray_aws.__file__), "defaults.yaml")
 
+def _load_fargate_defaults_config():
+    import ray.autoscaler.fargate as ray_fargate
+    return os.path.join(os.path.dirname(ray_fargate.__file__), "defaults.yaml")
+
 
 def _load_gcp_defaults_config():
     import ray.autoscaler.gcp as ray_gcp
@@ -126,6 +133,7 @@ _NODE_PROVIDERS = {
     "fake_multinode": _import_fake_multinode,
     "readonly": _import_readonly,
     "aws": _import_aws,
+    "fargate": _import_fargate,
     "gcp": _import_gcp,
     "azure": _import_azure,
     "staroid": _import_staroid,
@@ -139,6 +147,7 @@ _PROVIDER_PRETTY_NAMES = {
     "fake_multinode": "Fake Multinode",
     "local": "Local",
     "aws": "AWS",
+    "fargate": "Fargate",
     "gcp": "GCP",
     "azure": "Azure",
     "staroid": "Staroid",
@@ -150,6 +159,7 @@ _PROVIDER_PRETTY_NAMES = {
 _DEFAULT_CONFIGS = {
     "local": _load_local_defaults_config,
     "aws": _load_aws_defaults_config,
+    "fargate": _load_fargate_defaults_config,
     "gcp": _load_gcp_defaults_config,
     "azure": _load_azure_defaults_config,
     "staroid": _load_staroid_defaults_config,

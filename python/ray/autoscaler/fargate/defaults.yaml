@@ -1,0 +1,130 @@
+# A unique identifier for the head node and workers of this cluster.
+cluster_name: fargate-cluster
+
+# The maximum number of workers nodes to launch in addition to the head
+# node.
+max_workers: 2
+
+# The autoscaler will scale up the cluster faster with higher upscaling speed.
+# E.g., if the task requires adding more nodes then autoscaler will gradually
+# scale up the cluster in chunks of upscaling_speed*currently_running_nodes.
+# This number should be > 0.
+upscaling_speed: 1.0
+
+# If a node is idle for this many minutes, it will be removed.
+idle_timeout_minutes: 5
+
+# 
+provider:
+    type: fargate
+    region: eu-central-1
+
+    # use_internal_ips: true
+
+# Specify the pod type for the ray head node (as configured below).
+head_node_type: head_node
+# Specify the allowed pod types for this ray cluster and the resources they provide.
+available_node_types:
+  worker_node:
+    # Minimum number of Ray workers of this Pod type.
+    min_workers: 0
+    node_config:
+      apiVersion: v1
+      metadata:
+        # Automatically generates a name for the pod with this prefix.
+        generateName: example-cluster-ray-worker-
+      spec:
+        family: RayWorker
+        cpu: 1vCPU
+        memory: 2GB
+        # This volume allocates shared memory for Ray to use for its plasma
+        # object store. If you do not provide this, Ray will fall back to
+        # /tmp which cause slowdowns if is not a shared memory volume.
+        volumes:
+        - name: dshm
+        containers:
+        - name: ray-node
+          image: rayproject/ray:latest
+          mountPoints:
+            - sourceVolume: dshm
+            - containerPath": /dev/shm
+  head_node:
+    node_config:
+      apiVersion: v1
+      metadata:
+        # Automatically generates a name for the pod with this prefix.
+        generateName: cluster-ray-head-
+        # Must match the head node service selector above if a head node
+        # service is required.
+        labels:
+            component: cluster-ray-head
+      spec:
+        family: RayHead
+        cpu: 1vCPU
+        memory: 2GB
+        # This volume allocates shared memory for Ray to use for its plasma
+        # object store. If you do not provide this, Ray will fall back to
+        # /tmp which cause slowdowns if is not a shared memory volume.
+        volumes:
+        - name: dshm
+        containers:
+        - name: ray-node
+          image: rayproject/ray:latest
+          portMappings:
+          - containerPort: 8000  # Ray server
+          - containerPort: 6379  # Redis port
+          - containerPort: 10001  # Used by Ray Client
+          - containerPort: 8265  # Used by Ray Dashboard
+          mountPoints:
+            - sourceVolume: dshm
+            - containerPath": /dev/shm
+
+
+# Command to start ray on the head node. You don't need to change this.
+# Note dashboard-host is set to 0.0.0.0 so that kubernetes can port forward.
+head_start_ray_commands:
+    - ray stop
+    - ulimit -n 65536; ray start --head --autoscaling-config=~/ray_bootstrap_config.yaml --dashboard-host 0.0.0.0
+
+# Command to start ray on worker nodes. You don't need to change this.
+worker_start_ray_commands:
+    - ray stop
+    - ulimit -n 65536; ray start --address=$RAY_HEAD_IP:6379
+
+# Files or directories to copy to the head and worker nodes. The format is a
+# dictionary from REMOTE_PATH: LOCAL_PATH, e.g.
+file_mounts: {
+#    "~/path1/on/remote/machine": "/path1/on/local/machine",
+#    "~/path2/on/remote/machine": "/path2/on/local/machine",
+}
+# Note that the container images in this example have a non-root user.
+# To avoid permissions issues, we recommend mounting into a subdirectory of home (~).
+
+# Files or directories to copy from the head node to the worker nodes. The format is a
+# list of paths. The same path on the head node will be copied to the worker node.
+# This behavior is a subset of the file_mounts behavior. In the vast majority of cases
+# you should just use file_mounts. Only use this if you know what you're doing!
+cluster_synced_files: []
+
+# Whether changes to directories in file_mounts or cluster_synced_files in the head node
+# should sync to the worker node continuously
+file_mounts_sync_continuously: False
+
+
+# List of commands that will be run before `setup_commands`. If docker is
+# enabled, these commands will run outside the container and before docker
+# is setup.
+initialization_commands: []
+
+# List of shell commands to run to set up nodes.
+setup_commands: []
+
+# Custom commands that will be run on the head node after common setup.
+head_setup_commands: []
+
+# Custom commands that will be run on worker nodes after common setup.
+worker_setup_commands: []
+
+head_node: {}
+
+worker_nodes: {}

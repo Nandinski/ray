@@ -584,8 +584,7 @@ def _get_or_create_vpc_security_groups(conf, node_types):
     node_type_to_vpc = {
         node_type: _get_vpc_id_or_die(
             ec2,
-            conf["available_node_types"][node_type]["node_config"]["SubnetIds"]
-            [0],
+            conf["available_node_types"][node_type]["node_config"]["SubnetIds"][0],
         )
         for node_type in node_types
     }
