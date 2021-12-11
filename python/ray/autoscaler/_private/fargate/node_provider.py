@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List
 
 import botocore
+from ray.autoscaler._private.resource_demand_scheduler import NodeID
 
 from ray.autoscaler.node_provider import NodeProvider
 from ray.autoscaler.tags import STATUS_SETTING_UP, TAG_RAY_CLUSTER_NAME, TAG_RAY_NODE_NAME, \
@@ -31,11 +32,14 @@ logger = logging.getLogger(__name__)
 
 TAG_BATCH_DELAY = 1
 
-STATUS_STOPPED = "stopped"
+STATUS_STOPPED = "STOPPED"
+
+def make_ec2_client(region, max_retries, aws_credentials=None):
+    """Make client, retrying requests up to `max_retries`."""
+    aws_credentials = aws_credentials or {}
+    return resource_cache("ec2", region, max_retries, **aws_credentials)
 
 class FargateNodeProvider(NodeProvider):
-    max_terminate_nodes = 1000
-
     def __init__(self, provider_config, cluster_name):
         NodeProvider.__init__(self, provider_config, cluster_name)
         self.cache_stopped_nodes = provider_config.get("cache_stopped_nodes",
@@ -105,6 +109,101 @@ class FargateNodeProvider(NodeProvider):
         self.cached_tasks = {task["taskArn"]: task for task in tasks}
         return [task["taskArn"] for task in tasks]
 
+    def is_running(self, node_id):
+        task = self._get_cached_task(node_id)
+        return task["lastStatus"] == "RUNNING"
+
+    def is_terminated(self, node_id):
+        task = self._get_cached_task(node_id)
+        if task:
+            status = task["lastStatus"]
+            return status in ["DEACTIVATING", "STOPPING", "DEPROVISIONING", "STOPPED"]
+        else:
+            return True
+
+
+    def _get_task_IP(self, task, internal_IP=True):
+        nic = None
+        for attachment in task["attachments"]:
+            if attachment["type"] == "ElasticNetworkInterface":
+                nic = attachment
+        assert nic != None, "Could not find ElasticNetworkInterface of task with arn: {}".format(task["taskArn"])
+        # Expected to return None if IP cannot yet be found
+        if  nic["Status"] in ["PRECREATED", "CREATED", "ATTACHING"]:
+            return None
+
+        if internal_IP:
+            for detail in nic["details"]:
+                if internal_IP and detail["name"] == "privateIPv4Address":
+                    return detail["value"]
+        else:
+            for detail in nic["details"]:
+                nid = None
+                if detail["name"] == "networkInterfaceId":
+                    nid = detail["value"]
+            interface = self.ec2.describe_network_interfaces(NetworkInterfaceIds=[nid])['NetworkInterfaces'][0]
+            public_IP = interface['Association']['PublicIp']
+            return public_IP
+
+    # Expected to return None if ip is not yet available
+    def external_ip(self, node_id):
+        task = self._get_cached_task(node_id)
+        assert task != None, "Trying to get external IP of nonexistent task" 
+        return self._get_task_IP(task, internal_IP=False)
+
+    # Expected to return None if ip is not yet available
+    def internal_ip(self, node_id):
+        task = self._get_cached_task(node_id)
+        assert task != None, "Trying to get external IP of nonexistent task" 
+        return self._get_task_IP(task, internal_IP=True)
+
+    def set_node_tags(self, node_id, tags):
+        # Multiple threads can call this function but only one commits changes
+        # To do that one of the threads is designated the batching thread and 
+        # sleeps for a while before commit changes
+        is_batching_thread = False
+        with self.tag_cache_lock:
+            if not self.tag_cache_pending:
+                is_batching_thread = True
+                # Wait for threads in the last batch to exit
+                self.ready_for_new_batch.wait()
+                self.ready_for_new_batch.clear()
+                self.batch_update_done.clear()
+            self.tag_cache_pending[node_id].update(tags)
+
+        if is_batching_thread:
+            time.sleep(TAG_BATCH_DELAY)
+            with self.tag_cache_lock:
+                self._update_node_tags()
+                self.batch_update_done.set()
+
+        with self.count_lock:
+            self.batch_thread_count += 1
+        self.batch_update_done.wait()
+
+        with self.count_lock:
+            self.batch_thread_count -= 1
+            if self.batch_thread_count == 0:
+                self.ready_for_new_batch.set()
+
+    def _update_node_tags(self):
+        batch_updates = defaultdict(list)
+
+        for taskArn, tags in self.tag_cache_pending.items():
+            for tagK, tagV in tags.items: 
+                batch_updates[taskArn].append({"key": tagK, "value": tagV})
+            self.tag_cache[taskArn].update(tags)
+
+        self.tag_cache_pending = defaultdict(dict)
+
+        for taskArn, tags in batch_updates.items():
+            m = "Set tags {} on taskArn {}".format(tags, taskArn)
+            with LogTimer("FargateNodeProvider: {}".format(m)):
+                self.ecs.tag_resource(
+                    resourceArn=taskArn,
+                    Tags=tags,
+                )
+
     def _get_tasks_w_tags(self, tag_filters, w_details=True):
         """ Returns task arns of tasks matching tag_filters that are either on a pending or ready state
         """
@@ -122,11 +221,11 @@ class FargateNodeProvider(NodeProvider):
         tasks_arn_tags = self.rgTask.get_resources(ResourceTypeFilters=["ecs:task-definition"], TagFilters=tag_filters)["ResourceTagMappingList"]
         return tasks_arn_tags
 
-    def _get_tasks_details(self, task_arn):
+    def _get_tasks_details(self, task_arns):
         task_details = self.ecsClient.describe_tasks(cluster=self.cluster_name,
-        tasks=task_arn,
-        include=['TAGS'])
-        return task_details["tasks"]
+        tasks=task_arns,
+        include=['TAGS'])["tasks"]
+        return task_details
 
     # Note: node id represents the task arn
     def node_tags(self, node_id):
@@ -161,7 +260,7 @@ class FargateNodeProvider(NodeProvider):
             count -= len(reused_nodes_dict)
             all_created_nodes = reused_nodes_dict
         if count:
-            created_tasks_dict = self.run_task(taskDefArn, count)
+            created_tasks_dict = self._run_task(taskDefArn, count)
             all_created_nodes.update(created_tasks_dict)
 
         return all_created_nodes
@@ -173,39 +272,68 @@ class FargateNodeProvider(NodeProvider):
         self.ecsClient.register_task_definition(**task_def_spec)
 
     # TODO We can override task config! If we do it, don't forget to override the tag with config hash
-    def run_task(self, taskDefArn, node_config, count):
-        # Apperently aws only allows us to spawn 10 tasks at once
-        missingCount = count
+    def _run_task(self, taskDefArn, node_config, count):
         spawnedTasks = []
         cli_logger_tags = {}   
 
-        subnet_id = node_config["SubnetIds"][0]
+        subnet_idx = 0
+        subnet_ids = [node_config["SubnetIds"][0]] # TODO limiting this to one subnet for now
         sg_id = node_config["SecurityGroupIds"][0]
 
-        cli_logger_tags["subnet_id"] = subnet_id
-        with cli_logger.group(
+        max_tries = max(BOTO_CREATE_MAX_RETRIES, len(subnet_ids))
+        missingCount = count
+        for attempt in range(1, max_tries + 1):
+            try:
+                subnet_id = subnet_ids[subnet_idx % len(subnet_ids)]
+                cli_logger_tags["subnet_id"] = subnet_id
+
+                while True:
+                    # Apperently aws only allows us to spawn 10 tasks at once
+                    # TODO handle case where subnet is full?
+                    toSpawn = min(10, missingCount)
+                    spawnedTasks.append(self.ecsClient.run_task(
+                        taskDefinition=taskDefArn,
+                        cluster=self.cluster_name,
+                        networkConfiguration={
+                            'awsvpcConfiguration': {
+                                'subnets': [ subnet_id ],
+                                'securityGroups': [ sg_id ],
+                            }
+                        },
+                        # placementStrategy=[{
+                        #     "type": "binpack",
+                        #     "field": "cpu", # also supports mem
+                        # }],
+                        count=toSpawn
+                    )["tasks"])
+                    missingCount -= toSpawn
+                    if missingCount == 0:
+                        break
+
+                with cli_logger.group(
                         "Launched {} tasks", count, _tags=cli_logger_tags):
-            while True:
-                # TODO handle case where subnet is full?
-                toSpawn = min(10, missingCount)
-                spawnedTasks.append(self.ecsClient.run_task(
-                    taskDefinition=taskDefArn,
-                    cluster=self.cluster_name,
-                    networkConfiguration={
-                        'awsvpcConfiguration': {
-                            'subnets': [
-                                node_config["SubnetIds"][0],
-                            ],
-                            'securityGroups': [
-                                node_config["SecurityGroupIds"][0],
-                            ],
-                        }
-                    },
-                    count=toSpawn
-                )["tasks"])
-                missingCount -= toSpawn
-                if missingCount == 0:
-                    break
+                    for task in spawnedTasks:
+                            cli_logger.print(
+                            "Launched task {}",
+                            task["taskArn"],
+                            _tags=dict(
+                                state=task["lastStatus"]))
+                break
+
+            except botocore.exceptions.ClientError as exc:
+                if attempt == max_tries:
+                    cli_logger.abort(
+                        "Failed to launch instances. Max attempts exceeded.",
+                        exc=exc,
+                    )
+                else:
+                    cli_logger.warning(
+                        "run_task: Attempt failed with {}, retrying.",
+                        exc)
+
+                # Launch failure may be due to instance type availability in
+                # the given AZ
+                subnet_idx += 1
             
         spawnedTasksDict = {spawnedTasks["taskArn"]: task for task in spawnedTasks}
         return spawnedTasksDict
@@ -253,86 +381,45 @@ class FargateNodeProvider(NodeProvider):
                 self.set_node_tags(node_id, tags)
         return reused_nodes_dict
 
-    
-    def _create_node(self, node_config, tags, count):
-        created_nodes_dict = {}
-        conf = node_config.copy()
+    def _get_task(self, node_id):
+        """Refresh and get info for this node, updating the cache."""
+        self.non_terminated_nodes({})  # Side effect: updates cache
 
-        tags = self.convert_to_aws_tag(tags)
+        if node_id in self.cached_nodes:
+            return self.cached_nodes[node_id]
+
+        task_details = self._get_tasks_details([node_id])["tasks"]
+        # Tasks are deleted after a while, so we might not be able to find this one
+        if len(task_details["tasks"]) == 1:
+            return task_details["tasks"][0]
+        else:
+            # Make sure the reason for failure is due to missing arn
+            failure = task_details["failures"][0]
+            assert failure["arn"] == node_id and failure["reason"] == "MISSING", \
+                "Problem fetching task with arn {}".format(node_id)
+            return None
+
+    def _get_cached_task(self, node_id):
+        """Return task info from cache if possible, otherwise fetches it."""
+        if node_id in self.cached_nodes:
+            return self.cached_nodes[node_id]
+
+        return self._get_task(node_id)
+
+
+    def terminate_node(self, node_id):
+        task = self._get_cached_task(node_id)
         
-        # SubnetIds is not a real config key: we must resolve to a
-        # single SubnetId before invoking the AWS API.
-        subnet_ids = conf.pop("SubnetIds")
+        # TODO this can end badly if the task is not found
+        self.ecs.stop_task(
+            cluster=self.cluster_name,
+            task=node_id,
+            reason='Ray terminated'
+        )
 
-        # update config with min/max node counts and tag specs
-        conf.update({
-            "MinCount": 1,
-            "MaxCount": count,
-            "TagSpecifications": tags
-        })
-
-        # Try to always launch in the first listed subnet.
-        subnet_idx = 0
-        cli_logger_tags = {}
-        # NOTE: This ensures that we try ALL availability zones before
-        # throwing an error.
-        max_tries = max(BOTO_CREATE_MAX_RETRIES, len(subnet_ids))
-        for attempt in range(1, max_tries + 1):
-            try:
-                if "NetworkInterfaces" in conf:
-                    net_ifs = conf["NetworkInterfaces"]
-                    # remove security group IDs previously copied from network
-                    # interfaces (create_instances call fails otherwise)
-                    conf.pop("SecurityGroupIds", None)
-                    cli_logger_tags["network_interfaces"] = str(net_ifs)
-                else:
-                    subnet_id = subnet_ids[subnet_idx % len(subnet_ids)]
-                    conf["SubnetId"] = subnet_id
-                    cli_logger_tags["subnet_id"] = subnet_id
-
-                # Continue from here !!!!
-                created = self.ec2_fail_fast.create_instances(**conf)
-                created_nodes_dict = {n.id: n for n in created}
-
-                # todo: timed?
-                # todo: handle plurality?
-                cli_logger_tags["subnet_id"] = subnet_id
-
-                with cli_logger.group(
-                        "Launched {} nodes", count, _tags=cli_logger_tags):
-                    for instance in created:
-                        # NOTE(maximsmol): This is needed for mocking
-                        # boto3 for tests. This is likely a bug in moto
-                        # but AWS docs don't seem to say.
-                        # You can patch moto/ec2/responses/instances.py
-                        # to fix this (add <stateReason> to EC2_RUN_INSTANCES)
-
-                        # The correct value is technically
-                        # {"code": "0", "Message": "pending"}
-                        state_reason = instance.state_reason or {
-                            "Message": "pending"
-                        }
-
-                        cli_logger.print(
-                            "Launched instance {}",
-                            instance.instance_id,
-                            _tags=dict(
-                                state=instance.state["Name"],
-                                info=state_reason["Message"]))
-                break
-            except botocore.exceptions.ClientError as exc:
-                if attempt == max_tries:
-                    cli_logger.abort(
-                        "Failed to launch instances. Max attempts exceeded.",
-                        exc=exc,
-                    )
-                else:
-                    cli_logger.warning(
-                        "create_instances: Attempt failed with {}, retrying.",
-                        exc)
-
-                # Launch failure may be due to instance type availability in
-                # the given AZ
-                subnet_idx += 1
-
-        return created_nodes_dict
+        # TODO (Alex): We are leaking the tag cache here. Naively, we would
+        # want to just remove the cache entry here, but terminating can be
+        # asyncrhonous or error, which would result in a use after free error.
+        # If this leak becomes bad, we can garbage collect the tag cache when
+        # the node cache is updated.
+        pass
