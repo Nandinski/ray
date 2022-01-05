@@ -105,7 +105,6 @@ def fillout_resources_fargate(config):
     if "available_node_types" not in config:
         return config
     node_types = copy.deepcopy(config["available_node_types"])
-    head_node_type = config["head_node_type"]
     for node_type in node_types:
         node_config = node_types[node_type]["node_config"]
         node_spec = node_config["spec"]
@@ -113,8 +112,9 @@ def fillout_resources_fargate(config):
         autodetected_resources = get_resources_from_node_spec(node_spec)
         if "resources" not in config["available_node_types"][node_type]:
             config["available_node_types"][node_type]["resources"] = {}
-        autodetected_resources.update(
-            config["available_node_types"][node_type]["resources"])
+        else:
+            autodetected_resources.update(
+                config["available_node_types"][node_type]["resources"])
         config["available_node_types"][node_type][
             "resources"] = autodetected_resources
         logger.debug(
@@ -123,19 +123,21 @@ def fillout_resources_fargate(config):
     return config
 
 def get_resources_from_node_spec(node_spec):
-    node_type_resources = {
-        resource_name: node_spec["resource_name"] 
-        for resource_name in ["cpu", "memory"]
-    }
+    node_type_resources = {}
+
+    if node_spec["cpu"][:-3] == "vCPU":
+        node_type_resources["cpu"] = int(node_spec["cpu"].removesuffix("vCPU"))
+
+    # node_type_resources = {
+    #     resource_name: node_spec[resource_name] 
+    #     for resource_name in ["cpu", "memory"]
+    # }
 
     return node_type_resources
 
 def bootstrap_fargate(config):
     # create a copy of the input config to modify
     config = copy.deepcopy(config)
-
-    # Used internally to store head / worker IAM roles.
-    config["node_roles"] = {}
 
     # The head node needs to have an IAM role that allows it to create further
     # EC2 instances.
@@ -163,7 +165,7 @@ def bootstrap_fargate(config):
 def _configure_task_roles(config):
     node_types = config["available_node_types"]
     for node_type in node_types:
-        node_type_config = node_type["config"]
+        node_type_config = node_types[node_type]["node_config"]
 
         if "executionRoleArn" not in node_type_config:
             task_execution_role_name = DEFAULT_RAY_TASK_EXECUTION_ROLE
@@ -174,8 +176,8 @@ def _configure_task_roles(config):
                     cf.bold(task_execution_role_name))
                 
                 policy_arns = ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"]
-            task_execution_role = _create_role(task_execution_role_name, policy_arns)
-            node_type_config["executionRoleArn"] = task_execution_role.arn
+                task_execution_role = _create_role(task_execution_role_name, policy_arns, config)
+                node_type_config["executionRoleArn"] = task_execution_role.arn
 
         if "taskRoleArn" not in node_type_config:
             task_role_name = DEFAULT_RAY_TASK_ROLE
@@ -186,7 +188,7 @@ def _configure_task_roles(config):
                     cf.bold(task_role_name))
                 
                 policy_arns = ["arn:aws:iam::aws:policy/AmazonECS_FullAccess"]
-                task_role = _create_role(task_role_name, policy_arns)
+                task_role = _create_role(task_role_name, policy_arns, config)
                 node_type_config["taskRoleArn"] = task_role.arn
 
     return config
@@ -236,18 +238,18 @@ def _create_role(role_name, policiesToAttach, config):
     for policy_arn in policiesToAttach:
         role.attach_policy(PolicyArn=policy_arn)
 
-    iamClient = client_cache('iam')
+    iamClient = client_cache('iam', config["provider"]["region"])
     waiter = iamClient.get_waiter('role_exists')
     waiter.wait(RoleName=role_name)
 
-    time.sleep(15)
+    # time.sleep(15)
 
     return role
 
 def _configure_fargate_cluster(config):
     ecsClient = client_cache('ecs', config["provider"]["region"])
     # Check for already existing clusters 
-    clusters_data = ecsClient.describe_clusters(clusters=[config["cluster_name"]])[0]
+    clusters_data = ecsClient.describe_clusters(clusters=[config["cluster_name"]])
     if len(clusters_data["clusters"]) == 0:
         cli_logger.verbose(
                 f"Cluster with name {config['cluster_name']} not found. Creating cluster.")

@@ -13,7 +13,6 @@ from ray.autoscaler.tags import STATUS_SETTING_UP, TAG_RAY_CLUSTER_NAME, TAG_RAY
     TAG_RAY_LAUNCH_CONFIG, TAG_RAY_NODE_KIND, TAG_RAY_USER_NODE_TYPE
 from ray.autoscaler._private.constants import BOTO_MAX_RETRIES, \
     BOTO_CREATE_MAX_RETRIES
-from ray.autoscaler._private.aws.config import bootstrap_aws
 from ray.autoscaler._private.log_timer import LogTimer
 
 from ray.autoscaler._private.aws.utils import boto_exception_handler, \
@@ -25,7 +24,7 @@ from ray.autoscaler._private.aws.cloudwatch.cloudwatch_helper import \
     CloudwatchHelper, CLOUDWATCH_AGENT_INSTALLED_AMI_TAG,\
     CLOUDWATCH_AGENT_INSTALLED_TAG
 
-from ray.autoscaler._private.fargate.config import _get_task_def, bootstrap_fargate, \
+from ray.autoscaler._private.fargate.config import bootstrap_fargate, \
     fillout_resources_fargate
 
 logger = logging.getLogger(__name__)
@@ -75,10 +74,10 @@ class FargateNodeProvider(NodeProvider):
         # excessive DescribeTasks requests.
         self.cached_tasks = {}
 
-    # @staticmethod
-    # def fillout_available_node_types_resources(cluster_config):
-    #     """Fills out missing "resources" field for available_node_types."""
-    #     return fillout_resources_fargate(cluster_config)
+    @staticmethod
+    def fillout_available_node_types_resources(cluster_config):
+        """Fills out missing "resources" field for available_node_types."""
+        return fillout_resources_fargate(cluster_config)
 
     @staticmethod
     def bootstrap_config(cluster_config):
@@ -222,7 +221,9 @@ class FargateNodeProvider(NodeProvider):
         return tasks_arn_tags
 
     def _get_tasks_details(self, task_arns):
-        task_details = self.ecsClient.describe_tasks(cluster=self.cluster_name,
+        if len(task_arns) == 0:
+            return []
+        task_details = self.ecs.describe_tasks(cluster=self.cluster_name,
         tasks=task_arns,
         include=['TAGS'])["tasks"]
         return task_details
@@ -269,7 +270,7 @@ class FargateNodeProvider(NodeProvider):
     def _create_task_definition(self, node_config, tags):
         task_def_spec = node_config["spec"]
         task_def_spec["tags"] = self._get_tasks_w_tags(tags)
-        self.ecsClient.register_task_definition(**task_def_spec)
+        self.ecs.register_task_definition(**task_def_spec)
 
     # TODO We can override task config! If we do it, don't forget to override the tag with config hash
     def _run_task(self, taskDefArn, node_config, count):
@@ -291,7 +292,7 @@ class FargateNodeProvider(NodeProvider):
                     # Apperently aws only allows us to spawn 10 tasks at once
                     # TODO handle case where subnet is full?
                     toSpawn = min(10, missingCount)
-                    spawnedTasks.append(self.ecsClient.run_task(
+                    spawnedTasks.append(self.ecs.run_task(
                         taskDefinition=taskDefArn,
                         cluster=self.cluster_name,
                         networkConfiguration={
