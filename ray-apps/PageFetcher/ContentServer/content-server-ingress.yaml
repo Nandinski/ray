@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: "content-server-ingress"
+  namespace: "default"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+  labels:
+    app: contentServer
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefixkubectl get ingress nginx-ingress
+        backend:
+          service:
+            name: content-server-ingress
+            port:
+              number: 9090

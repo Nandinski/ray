@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: content-server-deployment
+  labels:
+    app: contentServer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: contentServer
+  template:
+    metadata:
+      name: content-server-pod
+      labels:
+        app: contentServer
+    spec:
+      containers:
+      - name: content-server
+        image: 152490780313.dkr.ecr.eu-central-1.amazonaws.com/resourceless:content-server
+        ports:
+        - containerPort: 80
+        # imagePullPolicy: Never
+        resources:
+            requests:
+              cpu: 1
+              memory: 1024
