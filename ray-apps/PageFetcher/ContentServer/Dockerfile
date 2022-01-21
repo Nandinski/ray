@@ -8,5 +8,6 @@ RUN rm /etc/nginx/conf.d/default.conf
 
 RUN chmod +x /public/generate_files.sh
 RUN /public/generate_files.sh 50 10M
+# RUN /public/generate_files.sh 5 100M
 
 EXPOSE 80

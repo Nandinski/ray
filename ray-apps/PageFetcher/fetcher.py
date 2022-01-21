@@ -1,3 +1,4 @@
+from collections import defaultdict
 from re import X
 import sys
 import time
@@ -6,6 +7,7 @@ import requests
 import random
 import pandas as pd
 import argparse
+import os
 
 from dataclasses import dataclass, fields
 
@@ -40,17 +42,22 @@ class URLMetrics:
     timeGettingFile: float
     timeComputing: float
 
+@dataclass
+class HeaderMetrics:
+    nCPUs: str
+    expN: int
+
 @ray.remote
 class MetricStore:
-    def __init__(self, interestedVarName, metricDCAttrs):
-        self.interestedVar = interestedVarName
+    def __init__(self, headerAttrs, metricDCAttrs):
+        self.headerAttrs = headerAttrs
         self.metricDCAttrs = metricDCAttrs
         self.metricList = []
 
-    def storeMetric(self, id, metric):
-        newMetric = [getattr(metric,attr) for attr in self.metricDCAttrs]
-        newMetric.insert(0, id)
-        self.metricList.append(newMetric)
+    def storeMetric(self, header, metric):
+        metricAttr = [getattr(metric,attr) for attr in self.metricDCAttrs]
+        headerAttr = [getattr(header,attr) for attr in self.headerAttrs]
+        self.metricList.append(headerAttr + metricAttr)
     
     def getMetricsByID(self, id):
         return self.store[id]
@@ -59,16 +66,17 @@ class MetricStore:
         return len(self.metricList) == count
 
     def getDF(self):
-        df = pd.DataFrame(self.metricList, columns=[self.interestedVar, *self.metricDCAttrs])
+        df = pd.DataFrame(self.metricList, columns=[*self.headerAttrs, *self.metricDCAttrs])
         return df
 
 def getRandomFileURL():
-    # Get nsqlookupdAddr
-    CONTENT_SERVER_ADDR = "content-server-service"
-    nFiles = 50
-    randomFile = random. randint(1, nFiles)
-    return f"http://{CONTENT_SERVER_ADDR}:80/files/file{randomFile}.dat"
+    nFiles = 5
+    randomFileID = random. randint(1, nFiles)
+    return getFileURL(randomFileID)
 
+def getFileURL(i):
+    CONTENT_SERVER_ADDR = "content-server-service"
+    return f"http://{CONTENT_SERVER_ADDR}:9090/files/file{i}.dat"
 
 def fetchURL(url):
     try:
@@ -89,11 +97,14 @@ def computeSim():
     return x
 
 @ray.remote(num_cpus=1)
-def processURL(url, nCPU, mStore):
+def processURL(url, headerMetrics, mStore):
     # print("Fetching ", url)
     
     start = time.time()
-    fetchURL(url)
+    # fetchURL(url)
+    # simulate fetching with sleep so that we don't bottleneck on network
+    # Sleep for 40ms as this is the average time fetching files
+    time.sleep(40/1000)
     timeGettingFile = time.time() - start 
     # print(f"Time getting file: {timeGettingFile}")
 
@@ -103,58 +114,64 @@ def processURL(url, nCPU, mStore):
     timeComputing = time.time() - start 
     # print(f"Time computing: {timeComputing}")
 
-    mStore.storeMetric.remote(nCPU, URLMetrics(url, timeGettingFile, timeComputing))
+    mStore.storeMetric.remote(headerMetrics, URLMetrics(url, timeGettingFile, timeComputing))
     return "Success"
 
 @ray.remote
-def remote_experiment(nr_urls, nCPU, mStore):
+def remote_experiment(nr_urls, nCPU, curr_exp, mStore):
     start = time.time()
-
-    refs = [processURL.options(num_cpus=nCPU).remote(getRandomFileURL(), nCPU, mStore) for i in range(nr_urls)]
+    refs = [processURL.options(num_cpus=nCPU).remote(getFileURL((i % 5)+1), HeaderMetrics(nCPU, curr_exp), mStore) for i in range(nr_urls)]
     pageResults = ray.get(refs)
     execTime = time.time() - start
     return execTime
 
-EXP_COUNT = 10
-def run_experiment(nr_urls, CPUs_to_exp):
-    attrs = [field.name for field in fields(URLMetrics)]
-    mStore = MetricStore.remote("nCPUs", attrs)
+def run_experiment(expName, exp_count, nr_urls, CPUs_to_exp):
+    metricAttrs = [field.name for field in fields(URLMetrics)]
+    headerAttrs = [field.name for field in fields(HeaderMetrics)]
+    
+    mStore = MetricStore.remote(headerAttrs, metricAttrs)
     execTimeList = []
     
     for nCPU in CPUs_to_exp:
-        for curr_exp in range(EXP_COUNT):
+        for curr_exp in range(exp_count):
             print(f"Running experiment with {nCPU=} and {curr_exp=}")
-            execTime = ray.get(remote_experiment.remote(nr_urls, nCPU, mStore))
+            execTime = ray.get(remote_experiment.remote(nr_urls, nCPU, curr_exp, mStore))
             print(f"{execTime=}")
-            execTimeList.append([nCPU, execTime])
+            execTimeList.append([nCPU, curr_exp, execTime])
 
     # Wait until all metrics have been collected
     while True:
-        if ray.get(mStore.matchMetricCount.remote(EXP_COUNT*nr_urls*len(CPUs_to_exp))):
+        if ray.get(mStore.matchMetricCount.remote(exp_count*nr_urls*len(CPUs_to_exp))):
             break
         else:
             print("Not all metrics present. Waiting.")
             time.sleep(0.1)
 
+    parentDir = os.path.join("Metrics", expName)
+    os.makedirs(parentDir, exist_ok=True)
     metricDF = ray.get(mStore.getDF.remote())
-    metricDF.to_csv('collectedMetrics.csv', index=False)
-    execDF = pd.DataFrame(execTimeList, columns=["nCPUs", "Execution Time"])
-    execDF.to_csv('execTime.csv', index=False)
+    metricDF.to_csv(os.path.join(parentDir,'collectedMetrics.csv'), index=False)
+    execDF = pd.DataFrame(execTimeList, columns=["nCPUs", "expN", "Execution Time"])
+    execDF.to_csv(os.path.join(parentDir, 'execTime.csv'), index=False)
 
 
 def main():
     parser = argparse.ArgumentParser(description='Webcrawler on Ray')
+    parser.add_argument('--exp_name', type=str, help='Name of experiment to prepend to output files', required=True)
+    parser.add_argument('--exp_count', type=int, help='Name of times to repeat experiment', choices=range(1, int(1e2)), default=int(100))
     parser.add_argument('--nr_urls', type=int, help='Nr of urls to fetch', choices=range(1, int(1e6)), default=int(1e2))
-    parser.add_argument('--CPUs_to_exp', nargs="+", help='Cpus to experiment with',  default=[1, 0.75, 0.5])
+    parser.add_argument('--CPUs_to_exp', nargs="+", help='Cpus to experiment with',  default=[1, 0.5])
 
     args = parser.parse_args()
+    exp_name = args.exp_name
+    exp_count = args.exp_count
     nr_urls = args.nr_urls
     CPUs_to_exp = args.CPUs_to_exp
 
     wait_for_nodes(3)
-    run_experiment(nr_urls, CPUs_to_exp)
+    run_experiment(exp_name, exp_count, nr_urls, CPUs_to_exp)
     sys.stdout.flush()
-    print("Web crawl experiment was a success!")
+    print("Page fetcher experiment was a success!")
 
 
 if __name__ == "__main__":
