@@ -17,13 +17,14 @@ spec:
     spec:
       containers:
       - name: content-server
-        image: 152490780313.dkr.ecr.eu-central-1.amazonaws.com/resourceless:content-server
+        image: resourceless/content-server
+        # image: 152490780313.dkr.ecr.eu-central-1.amazonaws.com/resourceless:content-server
         ports:
         - containerPort: 80
-        # imagePullPolicy: Never
+        imagePullPolicy: Never
         resources:
             requests:
-              # cpu: 1
-              # memory: 1024              
-              cpu: 2
-              memory: 2048
+              cpu: 1
+              memory: 1024              
+              # cpu: 2
+              # memory: 2048

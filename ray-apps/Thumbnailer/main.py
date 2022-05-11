@@ -2,6 +2,7 @@ from cmath import e
 import sys
 import time
 from urllib import response
+from importlib_metadata import metadata
 from matplotlib.image import thumbnail
 import ray
 import requests
@@ -40,22 +41,25 @@ def wait_for_nodes(expected):
             break
 
 sys.path.append('/home/nando/PhD/Ray/ray/ray-apps')
-from ResourceAllocator.resource_allocator import rManager, resourceWrapper
+from ResourceAllocator.resource_allocator import rManager, resourceWrapperStress
 
 
 IMAGE_NAME = "image_name"
 EXTRACTED_METADATA = "extracted_metadata"
+THUMBNAIL_NAME = "thumbnail"
 from PIL import Image, ExifTags 
-@resourceWrapper
-@ray.remote
-def extractImgMetadata(imgURL):
-    print("Extracting img metadata")
 
-    imgPath = "thumbnail_pre.jpg"
+@resourceWrapperStress
+def extractImgMetadata(imgURL):
+    # print("Extracting img metadata")
+
+    imgPath = "test.jpg"
     r = requests.get(imgURL, allow_redirects=True)
     open(imgPath, 'wb').write(r.content)
     
     img = Image.open(imgPath)
+    # File is only required to open image. Delete after used
+    removeFile(imgPath)
     img_exif = img.getexif()
     img_exif_w_tags = {}
 
@@ -65,7 +69,7 @@ def extractImgMetadata(imgURL):
     else:
         for key, val in img_exif.items():
             if key in ExifTags.TAGS:
-                print(f'{ExifTags.TAGS[key]}:{val}, {key}')
+                # print(f'{ExifTags.TAGS[key]}:{val}, {key}')
                 img_exif_w_tags[ExifTags.TAGS[key]] = val
 
     response = {}
@@ -74,15 +78,13 @@ def extractImgMetadata(imgURL):
 
     return response
 
-
-@resourceWrapper
-@ray.remote
+@resourceWrapperStress
 def transformMetadata(args):
+    # print("Transforming metadata")
     response = {}
     response[IMAGE_NAME] = args[IMAGE_NAME]
 
     extracted_metadata = args[EXTRACTED_METADATA]
-    print("Transforming metadata")
     transformed_metadata = {}
     if ("DateTimeOriginal" in extracted_metadata):
         transformed_metadata["creationTime"] = extracted_metadata["DateTimeOriginal"]
@@ -109,10 +111,10 @@ def transformMetadata(args):
     # These two exif tags were not used originally
     # Instead the filesize and format tags were used. 
     # I'm using different tags because the original ones were not present in the test image
-    transformed_metadata["bitsPerSample:"] = extracted_metadata["BitsPerSample:"]
+    transformed_metadata["bitsPerSample"] = extracted_metadata["BitsPerSample"]
     transformed_metadata["software"] = extracted_metadata["Software"]
 
-    response[EXTRACTED_METADATA] = transformMetadata
+    response[EXTRACTED_METADATA] = transformed_metadata
     return response
 
 def parseCoordinate(coordinate, coordinateDirection):
@@ -127,64 +129,77 @@ def parseCoordinate(coordinate, coordinateDirection):
     ret["Direction"] = coordinateDirection
     return ret
 
-@resourceWrapper
-@ray.remote
-def handler(metadata):
-    print("Logging data")
-    return metadata
+@resourceWrapperStress
+def handler(args):
+    # print("Logging data")
+    return args
 
-@resourceWrapper
-@ray.remote(num_returns=2)
-def thumbnail(metadata, imgURL, max_size=(100, 100)):
-    print("Creating thumbnail")
-    
-    imgPath = "test.jpg"
+@resourceWrapperStress(num_returns=2)
+def thumbnail(args, imgURL, max_size=(250, 250)):
+    # print("Creating thumbnail")
+
+    response = args
+
+    imageName = args[IMAGE_NAME]
+    size = args[EXTRACTED_METADATA]["dimensions"]
+    width = size["width"]
+    height = size["height"]
+
+    scalingFactor = min(max_size[0]/width, max_size[1]/height)
+    width = int(width * scalingFactor)
+    height = int(height * scalingFactor)
+
+    thumbnailName = "thumbnail-" + imageName
     r = requests.get(imgURL, allow_redirects=True)
-    open(imgPath, 'wb').write(r.content)
+    open(thumbnailName, 'wb').write(r.content)
     
-    image = Image.open(imgPath)
-    image.thumbnail(max_size)
+    image = Image.open(thumbnailName)
+    # File is only required to open the image
+    removeFile(thumbnailName)
+    image.thumbnail(size=(width, height))
 
-    return metadata, image
+    response[EXTRACTED_METADATA][THUMBNAIL_NAME] = thumbnailName
 
-@resourceWrapper
-@ray.remote
-def returnMetadata(metadata, image):
-    print("Returning metadata")
-    return image
+    return response, image
+
+@resourceWrapperStress
+def returnMetadata(args):
+    # print("Returning metadata")
+    return args[EXTRACTED_METADATA]
 
 # @ray.remote
 def createThumbnail(imgPath, max_size=(100, 100)):
-    print(f"Creating thumbnail for image at ={imgPath}")
+    # print(f"Creating thumbnail for image at ={imgPath}")
     start = time.time()
 
     imgMRef = extractImgMetadata.remote(imgPath)
     tfRef = transformMetadata.remote(imgMRef)
     hRef = handler.remote(tfRef)
-    mRef, imgRef = thumbnail.remote(hRef, imgPath, max_size)
-    rMRef = returnMetadata.remote(mRef, imgRef)
-    image = ray.get(rMRef)
+    tRef, imgRef = thumbnail.remote(hRef, imgPath, max_size)
+    rMRef = returnMetadata.remote(tRef)
+    image = ray.get(imgRef)
+    metadata = ray.get(rMRef)
     
-    image.save('thumb.png')
-    print(f"Transformed metadata.")
+    # print(f"Transformed metadata.")
+    # print(f"ExtractedMetadata: {metadata=}")
+    # print(f"Saving image")
+    image.save(metadata[THUMBNAIL_NAME])
 
     execTime = time.time() - start
     print(f"ExecTime = {round(execTime, 2)}s")
 
+import os
+def removeFile(filename):
+    if os.path.exists(filename):
+        os.remove(filename)
+    else:
+        print("The file does not exist!")
+        exit(1)
+
 def main(imgPath):
-    # runtime_env = {"working_dir": "./assets", "py_modules": ["../ResourceAllocator"], "pip": ["pillow", "bayesian-optimization"]}
-    # runtime_env = {"py_modules": ["../ResourceAllocator"], "pip": ["pillow", "requests", "bayesian-optimization"]}
-    runtime_env = {}
-    ray.init(f"ray://127.0.0.1:{LOCAL_PORT}", runtime_env=runtime_env)
-    wait_for_nodes(2)
-    
     # transformedMetadata = ray.get(createThumbnail.remote(imgPath))
     createThumbnail(imgPath)
 
-    print(f"Transformed img")
-
-    sys.stdout.flush()
-    ray.shutdown()
     print("Thumbnailer finished")
 
 if __name__ == "__main__":
@@ -199,5 +214,20 @@ if __name__ == "__main__":
     imgPath = args.imgPath
     desired_SLO = args.desired_SLO
 
-    # rManager.optimize(lambda: main(imgPath), SLO=desired_SLO)
-    main(imgPath)
+    # runtime_env = {"working_dir": "./assets", "py_modules": ["../ResourceAllocator"], "pip": ["pillow", "bayesian-optimization"]}
+    # runtime_env = {"py_modules": ["../ResourceAllocator"], "pip": ["pillow", "requests", "bayesian-optimization"]}
+    # runtime_env = {"py_modules": ["../ResourceAllocator"]}
+    runtime_env = {}
+    ray.init(f"ray://127.0.0.1:{LOCAL_PORT}", runtime_env=runtime_env)
+    wait_for_nodes(2)
+
+    rManager.optimize(lambda: main(imgPath), SLO=desired_SLO)
+    # main(imgPath)
+
+    # import threading
+    # stop_event = threading.Event()
+    # stressCPU(1, stop_event)
+
+
+    sys.stdout.flush()
+    ray.shutdown()

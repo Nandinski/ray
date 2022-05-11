@@ -1,0 +1,185 @@
+Name:         example-cluster
+Namespace:    default
+Labels:       app.kubernetes.io/managed-by=Helm
+Annotations:  kopf.zalando.org/last-handled-configuration:
+                {"spec":{"headPodType":"rayHeadType","headStartRayCommands":["ray stop","ulimit -n 65536; ray start --head --no-monitor --dashboard-host 0...
+              meta.helm.sh/release-name: example-cluster
+              meta.helm.sh/release-namespace: default
+API Version:  cluster.ray.io/v1
+Kind:         RayCluster
+Metadata:
+  Creation Timestamp:  2022-03-30T15:35:43Z
+  Finalizers:
+    kopf.zalando.org/KopfFinalizerMarker
+  Generation:  2
+  Managed Fields:
+    API Version:  cluster.ray.io/v1
+    Fields Type:  FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .:
+          f:meta.helm.sh/release-name:
+          f:meta.helm.sh/release-namespace:
+        f:labels:
+          .:
+          f:app.kubernetes.io/managed-by:
+      f:spec:
+        .:
+        f:headPodType:
+        f:headStartRayCommands:
+        f:idleTimeoutMinutes:
+        f:maxWorkers:
+        f:upscalingSpeed:
+        f:workerStartRayCommands:
+    Manager:      helm
+    Operation:    Update
+    Time:         2022-03-30T15:35:43Z
+    API Version:  cluster.ray.io/v1
+    Fields Type:  FieldsV1
+    fieldsV1:
+      f:status:
+        .:
+        f:autoscalerRetries:
+        f:phase:
+    Manager:      OpenAPI-Generator
+    Operation:    Update
+    Time:         2022-03-30T15:39:40Z
+    API Version:  cluster.ray.io/v1
+    Fields Type:  FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          f:kopf.zalando.org/last-handled-configuration:
+        f:finalizers:
+          .:
+          v:"kopf.zalando.org/KopfFinalizerMarker":
+      f:status:
+        f:kopf:
+          .:
+          f:progress:
+    Manager:      kopf
+    Operation:    Update
+    Time:         2022-03-30T15:42:01Z
+    API Version:  cluster.ray.io/v1
+    Fields Type:  FieldsV1
+    fieldsV1:
+      f:spec:
+        f:podTypes:
+    Manager:         kubectl-edit
+    Operation:       Update
+    Time:            2022-03-30T15:42:25Z
+  Resource Version:  4122
+  UID:               5020017e-b7c4-4f9c-a2f9-aeba41fba9fa
+Spec:
+  Head Pod Type:  rayHeadType
+  Head Start Ray Commands:
+    ray stop
+    ulimit -n 65536; ray start --head --no-monitor --dashboard-host 0.0.0.0
+  Idle Timeout Minutes:  5
+  Max Workers:           4
+  Pod Types:
+    Max Workers:  0
+    Min Workers:  0
+    Name:         rayHeadType
+    Pod Config:
+      API Version:  v1
+      Kind:         Pod
+      Metadata:
+        Generate Name:  ray-head-type-
+      Spec:
+        Containers:
+          Args:
+            trap : TERM INT; sleep infinity & wait;
+          Command:
+            /bin/bash
+            -c
+            --
+          Env:
+            Name:             RAY_gcs_server_rpc_server_thread_num
+            Value:            1
+          Image:              rayproject/ray:1.10.0-py38
+          Image Pull Policy:  Always
+          Name:               ray-node
+          Ports:
+            Container Port:  6379
+            Protocol:        TCP
+            Container Port:  10001
+            Protocol:        TCP
+            Container Port:  8265
+            Protocol:        TCP
+            Container Port:  8000
+            Protocol:        TCP
+          Resources:
+            Limits:
+              Cpu:     1
+              Memory:  1024Mi
+            Requests:
+              Cpu:     1
+              Memory:  1024Mi
+          Volume Mounts:
+            Mount Path:  /dev/shm
+            Name:        dshm
+        Restart Policy:  Never
+        Volumes:
+          Empty Dir:
+            Medium:  Memory
+          Name:      dshm
+    Ray Resources:
+      CPU:        0
+    Max Workers:  3
+    Min Workers:  3
+    Name:         rayWorkerType
+    Pod Config:
+      API Version:  v1
+      Kind:         Pod
+      Metadata:
+        Generate Name:  ray-worker-type-
+      Spec:
+        Containers:
+          Args:
+            trap : TERM INT; sleep infinity & wait;
+          Command:
+            /bin/bash
+            -c
+            --
+          Env:
+            Name:             RAY_gcs_server_rpc_server_thread_num
+            Value:            1
+          Image:              rayproject/ray:1.10.0-py38
+          Image Pull Policy:  Always
+          Name:               ray-node
+          Ports:
+            Container Port:  6379
+            Protocol:        TCP
+            Container Port:  10001
+            Protocol:        TCP
+            Container Port:  8265
+            Protocol:        TCP
+            Container Port:  8000
+            Protocol:        TCP
+          Resources:
+            Limits:
+              Cpu:     1
+              Memory:  1024Mi
+            Requests:
+              Cpu:     1
+              Memory:  1024Mi
+          Volume Mounts:
+            Mount Path:  /dev/shm
+            Name:        dshm
+        Restart Policy:  Never
+        Volumes:
+          Empty Dir:
+            Medium:  Memory
+          Name:      dshm
+  Upscaling Speed:   1
+  Worker Start Ray Commands:
+    ray stop
+    ulimit -n 65536; ray start --address=$RAY_HEAD_IP:6379
+Status:
+  Autoscaler Retries:  0
+  Kopf:
+    Progress:
+  Phase:  Running
+Events:   <none>

@@ -1,8 +1,0 @@
-nCPUs,params,timeGettingFile,timeComputing,timeEnqueing
-1,"CrawlURLParams(URL='http://content-server-service:9090/files/file347.dat', Depth=0)",0.048125267028808594,0.003997802734375,0.0063741207122802734
-1,"CrawlURLParams(URL='http://content-server-service:9090/files/file981.dat', Depth=1)",0.03873729705810547,0.004271507263183594,0.004719972610473633
-1,"CrawlURLParams(URL='http://content-server-service:9090/files/file85.dat', Depth=1)",0.054238319396972656,0.004430532455444336,0.0043926239013671875
-1,"CrawlURLParams(URL='http://content-server-service:9090/files/file331.dat', Depth=2)",0.0041429996490478516,0.0037980079650878906,0.0
-1,"CrawlURLParams(URL='http://content-server-service:9090/files/file521.dat', Depth=2)",0.0030710697174072266,0.003894805908203125,0.0
-1,"CrawlURLParams(URL='http://content-server-service:9090/files/file825.dat', Depth=2)",0.027913570404052734,0.003929853439331055,0.0
-1,"CrawlURLParams(URL='http://content-server-service:9090/files/file524.dat', Depth=2)",0.03130960464477539,0.003795623779296875,0.0

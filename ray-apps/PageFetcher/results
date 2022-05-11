@@ -1,0 +1,23 @@
+1 
+Configuration with 1vcpu = -28.56
+Best configuration found = -15.16
+Best resource map found = {'__main__.processURL': 0.2}
+
+2
+Configuration with 1vcpu = -16.18
+Best configuration found = -8.97
+Best resource map found = {'__main__.processURL': 0.4}
+Improvement over 1vcpu = -7.2 - -179.0%
+
+3
+Configuration with 1vcpu = -11.98
+Best configuration found = -7.07
+Best resource map found = {'__main__.processURL': 0.4}
+Improvement over 1vcpu = -4.91 - 169% Improvement
+
+4
+Best configuration found = -7.073333333333333
+Configuration with 1vcpu = -11.1
+Best configuration found = -7.07
+Best resource map found = {'__main__.processURL': 0.4}
+Improvement over 1vcpu = -4.02 - -156.0%

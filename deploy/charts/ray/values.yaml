@@ -3,7 +3,7 @@
 # RayCluster settings:
 
 # image is Ray image to use for the head and workers of this Ray cluster.
-image: rayproject/ray:latest-py38
+image: rayproject/ray:1.10.0-py38
 # headPodType is the podType used for the Ray head node (as configured below).
 headPodType: rayHeadType
 # podTypes is the list of pod configurations available for use as Ray nodes.
@@ -43,9 +43,9 @@ podTypes:
     # The key for each podType is a user-defined string.
     rayWorkerType:
         # minWorkers is the minimum number of Ray workers of this pod type to keep running.
-        minWorkers: 2
+        minWorkers: 4
         # maxWorkers is the maximum number of Ray workers of this pod type to which Ray will scale.
-        maxWorkers: 2
+        maxWorkers: 4
         # memory is the memory used by this Pod type.
         # (Used for both requests and limits.)
         memory: 1024Mi
@@ -97,7 +97,7 @@ namespacedOperator: false
 # in which to launch the operator.
 operatorNamespace: default
 # operatorImage - The image used in the operator deployment.
-operatorImage: rayproject/ray:latest-py38
+operatorImage: rayproject/ray:1.10.0-py38
 # `rayproject/ray:latest` contains the latest official release version of Ray.
 # `rayproject/ray:nightly` runs the current master version of Ray.
 # For a particular official release version of Ray, use `rayproject/ray:1.x.y`.

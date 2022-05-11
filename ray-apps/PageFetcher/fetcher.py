@@ -1,5 +1,3 @@
-from collections import defaultdict
-from re import X
 import sys
 import time
 import ray
@@ -8,6 +6,8 @@ import random
 import pandas as pd
 import argparse
 import os
+import functools
+from ray.autoscaler.sdk import request_resources
 
 from dataclasses import dataclass, fields
 
@@ -62,8 +62,13 @@ class MetricStore:
     def getMetricsByID(self, id):
         return self.store[id]
 
-    def matchMetricCount(self, count):
-        return len(self.metricList) == count
+    def waitForMetricCount(self, count):
+        while True:
+            if len(self.metricList) >= count:
+                return
+            else:
+                print("Not all metrics present. Waiting.")
+                time.sleep(0.1)
 
     def getDF(self):
         df = pd.DataFrame(self.metricList, columns=[*self.headerAttrs, *self.metricDCAttrs])
@@ -92,30 +97,83 @@ def fetchURL(url):
 
 def computeSim():
     x = 0
-    for i in range(0, int(5e5)):
+    for i in range(0, int(1e7)):
         x += i
     return x
 
+# from ray.util.metrics import Counter, Gauge, Histogram
+# def monitorF(func):
+#     print(f"Monitoring function {func.__name__}.")
+#     histogram = Histogram(
+#         "request_latency",
+#         description="Latencies of requests in ms.",
+#         boundaries=[0.1, 100],
+#         tag_keys=("func_name", ))
+#     print(f"{histogram._default_tags=}")
+#     @functools.wraps(func)
+#     def wrapper_decorator(*args, **kwargs):
+#         # Do something before
+#         start = time.time()
+#         value = func(*args, **kwargs)
+#         # Do something after
+#         #  Record the latency for this request in ms.
+#         latency = 1000 * (time.time() - start)
+#         print(f"{histogram._default_tags=}")
+#         histogram.observe(latency, {"func_name": func.__name__})
+#         print(f"Function {func.__name__}, measured latency = {latency}")
+#         return value
+#     return wrapper_decorator
+
+from resource_allocator import resourceWrapper
+# @resourceWrapper
+# @ray.remote(num_cpus=1)
+# def processURL(url, headerMetrics, mStore):
+#     # print("Fetching ", url)
+    
+#     start = time.time()
+#     # fetchURL(url)
+#     # simulate fetching with sleep so that we don't bottleneck on network
+#     # Sleep for 40ms as this is the average time fetching files
+#     time.sleep(40/1000)
+#     timeGettingFile = time.time() - start 
+#     # print(f"Time getting file: {timeGettingFile}")
+
+#     # Simulate computation
+#     start = time.time()
+#     computeSim()
+#     timeComputing = time.time() - start 
+#     # print(f"Time computing: {timeComputing}")
+
+#     mStore.storeMetric.remote(headerMetrics, URLMetrics(url, timeGettingFile, timeComputing))
+#     return "Success"
+
+@resourceWrapper
 @ray.remote(num_cpus=1)
-def processURL(url, headerMetrics, mStore):
+def processURL(url):
     # print("Fetching ", url)
     
-    start = time.time()
+    # start = time.time()
     # fetchURL(url)
     # simulate fetching with sleep so that we don't bottleneck on network
     # Sleep for 40ms as this is the average time fetching files
-    time.sleep(40/1000)
-    timeGettingFile = time.time() - start 
+    time.sleep(1000/1000)
+    # timeGettingFile = time.time() - start 
     # print(f"Time getting file: {timeGettingFile}")
 
     # Simulate computation
-    start = time.time()
+    # start = time.time()
     computeSim()
-    timeComputing = time.time() - start 
+    # timeComputing = time.time() - start 
     # print(f"Time computing: {timeComputing}")
-
-    mStore.storeMetric.remote(headerMetrics, URLMetrics(url, timeGettingFile, timeComputing))
     return "Success"
+
+# @ray.remote
+def run_remote_experiment(nr_urls):
+    start = time.time()
+    refs = [processURL.remote(getFileURL((i % 5)+1)) for i in range(nr_urls)]
+    pageResults = ray.get(refs)
+    execTime = time.time() - start
+    print(f"ExecTime = {round(execTime, 2)}s")
 
 @ray.remote
 def remote_experiment(nr_urls, nCPU, curr_exp, mStore):
@@ -125,27 +183,35 @@ def remote_experiment(nr_urls, nCPU, curr_exp, mStore):
     execTime = time.time() - start
     return execTime
 
-def run_experiment(expName, exp_count, nr_urls, CPUs_to_exp):
+def run_test(nr_urls, curr_exp, mStore, nCPU=1):
+    # print(f"Running experiment with {nCPU=} and {curr_exp=}")
+    execTime = ray.get(remote_experiment.remote(nr_urls, nCPU, curr_exp, mStore))
+    print(f"{execTime=}")
+    return execTime
+    
+def profile_run(nr_urls, CPUs_to_exp, exp_count, mStore):
+    execTimeList = []
+
+    for nCPU in CPUs_to_exp:
+        for curr_exp in range(exp_count):
+            execTime = run_test(nr_urls, curr_exp, mStore, nCPU=nCPU)
+            execTimeList.append([nCPU, curr_exp, execTime])
+    
+    return execTimeList
+
+def run_experiment(expName, exp_count, nr_urls, CPUs_to_exp, exp_type="profile"):
     metricAttrs = [field.name for field in fields(URLMetrics)]
     headerAttrs = [field.name for field in fields(HeaderMetrics)]
     
     mStore = MetricStore.remote(headerAttrs, metricAttrs)
-    execTimeList = []
     
-    for nCPU in CPUs_to_exp:
-        for curr_exp in range(exp_count):
-            print(f"Running experiment with {nCPU=} and {curr_exp=}")
-            execTime = ray.get(remote_experiment.remote(nr_urls, nCPU, curr_exp, mStore))
-            print(f"{execTime=}")
-            execTimeList.append([nCPU, curr_exp, execTime])
+    execTimeList = []
+    if exp_type == "profile":
+        execTimeList = profile_run(nr_urls, CPUs_to_exp, exp_count, mStore)
+        metricsToWait = exp_count*nr_urls*len(CPUs_to_exp)
 
     # Wait until all metrics have been collected
-    while True:
-        if ray.get(mStore.matchMetricCount.remote(exp_count*nr_urls*len(CPUs_to_exp))):
-            break
-        else:
-            print("Not all metrics present. Waiting.")
-            time.sleep(0.1)
+    ray.get(mStore.waitForMetricCount.remote(metricsToWait))
 
     parentDir = os.path.join("Metrics", expName)
     os.makedirs(parentDir, exist_ok=True)
@@ -155,27 +221,43 @@ def run_experiment(expName, exp_count, nr_urls, CPUs_to_exp):
     execDF.to_csv(os.path.join(parentDir, 'execTime.csv'), index=False)
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Webcrawler on Ray')
+def main(nr_urls):
+    ray.init(f"ray://127.0.0.1:{LOCAL_PORT}")
+    wait_for_nodes(2)
+    run_remote_experiment(nr_urls)
+    ray.shutdown()
+    # print("Page fetcher experiment was a success!")
+
+
+@ray.remote
+def no_work(x):
+    return x
+
+def measure_overhead():
+    start = time.time()
+    num_calls = 1000
+    [ray.get(no_work.remote(x)) for x in range(num_calls)]
+    print("per task overhead (ms) =", (time.time() - start)*1000/num_calls)
+
+from resource_allocator import rManager
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='PageFetcher on Ray')
     parser.add_argument('--exp_name', type=str, help='Name of experiment to prepend to output files', required=True)
-    parser.add_argument('--exp_count', type=int, help='Name of times to repeat experiment', choices=range(1, int(1e2)), default=int(100))
-    parser.add_argument('--nr_urls', type=int, help='Nr of urls to fetch', choices=range(1, int(1e6)), default=int(1e2))
-    parser.add_argument('--CPUs_to_exp', nargs="+", help='Cpus to experiment with',  default=[1, 0.5])
+    parser.add_argument('--exp_count', type=int, help='Nr of times to repeat experiment', choices=range(1, int(1e3)), default=int(15))
+    parser.add_argument('--nr_urls', type=int, help='Nr of urls to fetch', choices=range(1, int(1e4)), default=int(100))
+    parser.add_argument('--desired_SLO', type=int, help='SLO in ms',  default=0)
+    parser.add_argument('--max_config_attempts', type=int, help='Max configurations to experiment',  default=50)
 
     args = parser.parse_args()
     exp_name = args.exp_name
     exp_count = args.exp_count
     nr_urls = args.nr_urls
-    CPUs_to_exp = args.CPUs_to_exp
+    desired_SLO = args.desired_SLO
+    max_config_attempts = args.max_config_attempts
 
-    wait_for_nodes(3)
-    run_experiment(exp_name, exp_count, nr_urls, CPUs_to_exp)
-    sys.stdout.flush()
-    print("Page fetcher experiment was a success!")
-
-
-if __name__ == "__main__":
-    ray.init(f"ray://127.0.0.1:{LOCAL_PORT}")
-    main()
-    # print(ray.available_resources())
-    ray.shutdown()
+    # ray.init(f"ray://127.0.0.1:{LOCAL_PORT}")
+    # rManager.setOptimizer("MonotonicDecrease")
+    # main(nr_urls)
+    # measure_overhead()
+    rManager.optimize(lambda: main(nr_urls), SLO=desired_SLO, max_config_attempts=max_config_attempts)
+    # ray.shutdown()
