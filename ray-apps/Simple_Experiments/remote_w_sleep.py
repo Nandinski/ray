@@ -31,8 +31,9 @@ def wait_for_nodes(expected):
         else:
             break
 
-@resourceWrapperStress()
+@resourceWrapperStress(num_cpus=0.01)
 def testFunc():
+    time.sleep(300)
     return 0
 
 

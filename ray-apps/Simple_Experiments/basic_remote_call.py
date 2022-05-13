@@ -46,4 +46,4 @@ def main():
     ray.shutdown()
 
 if __name__ == "__main__":
-    RManager.optimize(lambda: main(), configs_to_test=1)
+    RManager.optimize(lambda: main(), exploration_strategy="GridSearch", configs_to_test=1)

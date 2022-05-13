@@ -29,8 +29,6 @@ def stressFunc(cpu_resources, function, *args, **kwargs):
 
 # Simulate stress
 def stressCPU(percent_cpu, stop_event):
-    if percent_cpu > 0:
-        raise ValueError(f"We can't handle more than 1 cpu yet!")
     timeUnit = 0.010 # Represents 10 ms
     on_time = percent_cpu * timeUnit
     off_time = (1 - percent_cpu) * timeUnit

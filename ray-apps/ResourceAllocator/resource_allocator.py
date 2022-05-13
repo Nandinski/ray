@@ -9,8 +9,10 @@ FORMAT = "[%(levelname)s] [%(filename)-20s:%(lineno)-s] %(message)s"
 logging.basicConfig(format=FORMAT, level=os.environ.get("LOGLEVEL", "INFO"))
 
 from .Exploration.NullExploration import NullExplorationStrategy
+from .Exploration.GridSearch import GridExplorationStrategy
 resource_Exploration_Strategies = {
-    "NullExploration": NullExplorationStrategy
+    "NullExploration": NullExplorationStrategy,
+    "GridSearch": GridExplorationStrategy,
 }
 
 class Singleton(type):

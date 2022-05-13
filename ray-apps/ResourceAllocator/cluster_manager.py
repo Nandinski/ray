@@ -78,10 +78,11 @@ def wait_for_new_spec(new_cluster_specification):
 
         if nodes_running == num_workers:
             end_time = time.time()
-            log.debug(f"Waited {end_time-start_time:0.2f} sec")
+            log.info(f"Waited {end_time-start_time:0.2f} sec")
             return
 
     log.error(f"Time waiting for node count exceeded timeout of {timeout}s")
+    exit(1)
     
 def get_node_resources_from_kubernetes_resp(rep):
     return rep
@@ -120,4 +121,4 @@ def change_cluster_spec(new_cluster_config, sync=True):
     if sync: 
         wait_for_new_spec(new_cluster_config)
 
-change_cluster_spec({"num_workers": 2, "cpu": "1", "memory": "1Gi"})
+change_cluster_spec({'num_workers': 2, 'cpu': '2', 'memory': '1Gi'})
