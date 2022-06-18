@@ -1,27 +1,25 @@
 from . import cluster_manager
-import time
+from datetime import datetime
 import os
+import numpy as np
 
 import logging
 log = logging.getLogger(__name__)
 # configure logging
 FORMAT = "[%(levelname)s] [%(filename)-20s:%(lineno)-s] %(message)s"
 logging.basicConfig(format=FORMAT, level=os.environ.get("LOGLEVEL", "INFO"))
+logging.disable()
 
 from .Exploration.NullExploration import NullExplorationStrategy
 from .Exploration.GridSearch import GridExplorationStrategy
+from .Exploration.BayesianSearch import BayesianExplorationStrategy
 resource_Exploration_Strategies = {
     "NullExploration": NullExplorationStrategy,
     "GridSearch": GridExplorationStrategy,
+    "BayesianOptSearch": BayesianExplorationStrategy,
 }
 
-class Singleton(type):
-    _instances = {}
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
-        return cls._instances[cls]
-
+from .utils import Singleton
 class ResourceManager(metaclass=Singleton):
     def __init__(self):
         self.initial_f_resource_map = {}
@@ -37,6 +35,10 @@ class ResourceManager(metaclass=Singleton):
             f_resources = {"num_cpus": f_resource_map[func_name]}
             cls_ptr.update_resources(f_resources)
 
+    def update_fuction_wrappers_func(self, function_wrapper, *args, **kwargs):
+        for _, cls_ptr in self.cls_mapper.items():
+            cls_ptr.update_function_wrapper(function_wrapper, *args, **kwargs)
+
     """
         Receives a function to optimize.
         It is expected that this function itself requires 1cpu. 
@@ -47,14 +49,27 @@ class ResourceManager(metaclass=Singleton):
             fastest (bool): if specified, will try to make the fastest computation it can.
             max_configuration_attemps (int): Number of configurations to try. 
     """
-    def optimize(self, func_to_explore, exploration_strategy="NullExploration", configs_to_test=1):
+    def optimize(self, func_to_explore, exploration_strategy="NullExploration", configs_to_test=1, save_searched_config=True, **kwargs):
         print(f"Optimizing function {func_to_explore.__name__}.")
 
         initial_cluster_config = cluster_manager.get_cluster_spec()
         exploration_strategyClass = self.get_exploration_strategy_class(exploration_strategy)
-        expl_strat = exploration_strategyClass(self.initial_f_resource_map, initial_cluster_config, self.update_resources_func, func_to_explore)
-        expl_strat.explore(configs_to_test)
-        return expl_strat.get_best_config()
+        expl_strat = exploration_strategyClass(self.initial_f_resource_map, 
+                                               initial_cluster_config, 
+                                               self.update_resources_func, 
+                                               self.update_fuction_wrappers_func,
+                                               func_to_explore)
+        expl_strat.explore_config_space(configs_to_test, **kwargs)
+
+        if save_searched_config:
+            date = datetime.now().strftime("%Y_%m_%d-%I:%M:%S_%p")
+            filename = f"optimize_{exploration_strategy}_{date}"
+            # expl_strat.save_configs_to_file(filename) # no longer used?
+            expl_strat.save_configs_to_csv_file(filename)
+
+        # best_config = expl_strat.get_best_config()
+        pareto_front_configs = expl_strat.pareto_front_configs()
+        return pareto_front_configs
 
     def get_exploration_strategy_class(self, exploration_strategy):
         if exploration_strategy in resource_Exploration_Strategies:
@@ -73,8 +88,12 @@ def resourceWrapper(func):
     print(f"Resource wraping function {func._function_name}.")
     class FuncWrapper:
         def __init__(self, func, initial_ncpus):
+            self.og_func = func
             self.function = func
             self.resources = {"num_cpus": initial_ncpus}
+            
+        def update_function_wrapper(self, f_wrapper, *args, **kwargs):
+            self.function = f_wrapper(self.og_func, *args, **kwargs)
 
         def remote(self, *args, **kwargs):
             # print(f"Func {func._function_name}, NCpus = {self.function._num_cpus}")
@@ -97,9 +116,13 @@ def resourceWrapperStress(*args, **kwargs):
         print(f"Resource wraping (w/stress) function {func.__name__}.")
         class FuncWrapper:
             def __init__(self, func, initial_ncpus):
+                self.og_func = func
                 self.function = func
                 self.resources = {"num_cpus": initial_ncpus}
                 self.stressFunc = resource_isolation_simulator.stressFunc.options(*args, **kwargs)
+            
+            def update_function_wrapper(self, f_wrapper, *args, **kwargs):
+                self.function = f_wrapper(self.og_func, *args, **kwargs)
 
             def remote(self, *args, **kwargs):
                 return self.stressFunc.remote(self.resources["num_cpus"], self.function, *args, **kwargs)

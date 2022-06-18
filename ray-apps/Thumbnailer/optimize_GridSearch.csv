@@ -1,0 +1,14 @@
+cluster_config,cluster_config,cluster_config,function_resource_map,function_resource_map,function_resource_map,function_resource_map,function_resource_map,config_point_result,config_point_result,config_point_result,config_point_result
+num_workers,cpu_per_worker,memory_per_worker,extractImgMetadata,transformMetadata,handler,thumbnail,returnMetadata,loss_used,loss_value,execution_time,cost_to_run
+1,1,1Gi,1.0,1.0,1.0,1.0,1.0,latency_loss,0.594,0.594,0.594
+2,1,1Gi,1.0,1.0,1.0,1.0,1.0,latency_loss,1.719,1.719,3.438
+2,1,1Gi,0.1,1.0,1.0,1.0,1.0,latency_loss,0.557,0.557,1.114
+2,1,1Gi,1.0,0.1,1.0,1.0,1.0,latency_loss,0.613,0.613,1.226
+2,1,1Gi,1.0,1.0,0.1,1.0,1.0,latency_loss,0.605,0.605,1.21
+2,1,1Gi,1.0,1.0,1.0,0.1,1.0,latency_loss,0.596,0.596,1.192
+2,1,1Gi,1.0,1.0,1.0,1.0,0.1,latency_loss,0.646,0.646,1.292
+1,1,1Gi,0.1,1.0,1.0,1.0,1.0,latency_loss,1.595,1.595,1.595
+1,1,1Gi,1.0,0.1,1.0,1.0,1.0,latency_loss,0.582,0.582,0.582
+1,1,1Gi,1.0,1.0,0.1,1.0,1.0,latency_loss,0.575,0.575,0.575
+1,1,1Gi,1.0,1.0,1.0,0.1,1.0,latency_loss,0.616,0.616,0.616
+1,1,1Gi,1.0,1.0,1.0,1.0,0.1,latency_loss,0.578,0.578,0.578

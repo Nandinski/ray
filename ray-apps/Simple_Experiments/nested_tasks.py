@@ -15,7 +15,7 @@ kubectl -n ray port-forward service/example-cluster-ray-head 10001:10001.
 
 Set the constant LOCAL_PORT below to the local port being forwarded.
 """
-LOCAL_PORT = 10001
+LOCAL_PORT = 10000
 
 def wait_for_nodes(expected):
     # Wait for all nodes to join the cluster.
@@ -36,12 +36,13 @@ def testFunc():
     return 0
 
 @resourceWrapperStress()
-def testFunc2():
+def parent():
+    ray.get(testFunc.remote())
     return 0
 
+
 def main():
-    refs = testFunc.remote()
-    refs = testFunc2.remote()
+    refs = parent.remote()
     v = ray.get(refs)
     print("Success!")
 

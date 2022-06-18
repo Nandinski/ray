@@ -1,0 +1,11 @@
+cluster_config,cluster_config,cluster_config,function_resource_map,function_resource_map,function_times,config_point_result,config_point_result,config_point_result,config_point_result,config_point_result
+num_workers,cpu_per_worker,memory_per_worker,testFunc,testFunc2,testFunc,loss_used,loss_value,execution_time,cost_to_run,attempt_n
+1,1,1Gi,1.0,1.0,9.5367431640625e-07,latency_loss,0.02,0.02,0.02,0
+1,1,1Gi,1.0,1.0,1.1920928955078125e-06,latency_loss,0.02,0.02,0.02,1
+1,1,1Gi,1.0,1.0,4.76837158203125e-07,latency_loss,0.02,0.02,0.02,2
+1,1,1Gi,0.1,1.0,2.1457672119140625e-06,latency_loss,0.044,0.044,0.044,0
+1,1,1Gi,0.1,1.0,1.9073486328125e-06,latency_loss,0.019,0.019,0.019,1
+1,1,1Gi,0.1,1.0,2.86102294921875e-06,latency_loss,0.019,0.019,0.019,2
+1,1,1Gi,1.0,0.1,1.1920928955078125e-06,latency_loss,0.037,0.037,0.037,0
+1,1,1Gi,1.0,0.1,4.76837158203125e-07,latency_loss,0.02,0.02,0.02,1
+1,1,1Gi,1.0,0.1,1.6689300537109375e-06,latency_loss,0.022,0.022,0.022,2

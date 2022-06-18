@@ -1,19 +1,10 @@
-from cmath import e
 import sys
 import time
-from urllib import response
-from importlib_metadata import metadata
 from matplotlib.image import thumbnail
 import ray
 import requests
-import random
-import pandas as pd
 import argparse
 import os
-import functools
-from ray.autoscaler.sdk import request_resources
-
-from dataclasses import dataclass, fields
 
 """ Run this script locally to execute a Ray program on your Ray cluster on
 Kubernetes.
@@ -41,25 +32,26 @@ def wait_for_nodes(expected):
             break
 
 sys.path.append('/home/nando/PhD/Ray/ray/ray-apps')
-from ResourceAllocator.resource_allocator import rManager, resourceWrapperStress
-
+from ResourceAllocator.resource_allocator import RManager, resourceWrapperStress
 
 IMAGE_NAME = "image_name"
 EXTRACTED_METADATA = "extracted_metadata"
 THUMBNAIL_NAME = "thumbnail"
 from PIL import Image, ExifTags 
+ADD_TIME_TO_IMG_FETCH = 0.1
 
 @resourceWrapperStress
 def extractImgMetadata(imgURL):
     # print("Extracting img metadata")
 
-    imgPath = "test.jpg"
+    img_name = "test.jpg"
     r = requests.get(imgURL, allow_redirects=True)
-    open(imgPath, 'wb').write(r.content)
+    open(img_name, 'wb').write(r.content)
+    time.sleep(ADD_TIME_TO_IMG_FETCH) # simulate a slower fetch 
     
-    img = Image.open(imgPath)
-    # File is only required to open image. Delete after used
-    removeFile(imgPath)
+    img = Image.open(img_name)
+    # File is only necessary to open image. Delete after use
+    removeFile(img_name)
     img_exif = img.getexif()
     img_exif_w_tags = {}
 
@@ -73,7 +65,7 @@ def extractImgMetadata(imgURL):
                 img_exif_w_tags[ExifTags.TAGS[key]] = val
 
     response = {}
-    response[IMAGE_NAME] = imgPath
+    response[IMAGE_NAME] = img_name
     response[EXTRACTED_METADATA] = img_exif_w_tags
 
     return response
@@ -129,15 +121,14 @@ def parseCoordinate(coordinate, coordinateDirection):
     ret["Direction"] = coordinateDirection
     return ret
 
-@resourceWrapperStress
-def handler(args):
-    # print("Logging data")
-    return args
+# @resourceWrapperStress
+# def handler(args):
+#     # print("Logging data")
+#     return args
 
 @resourceWrapperStress(num_returns=2)
 def thumbnail(args, imgURL, max_size=(250, 250)):
     # print("Creating thumbnail")
-
     response = args
 
     imageName = args[IMAGE_NAME]
@@ -152,9 +143,10 @@ def thumbnail(args, imgURL, max_size=(250, 250)):
     thumbnailName = "thumbnail-" + imageName
     r = requests.get(imgURL, allow_redirects=True)
     open(thumbnailName, 'wb').write(r.content)
+    time.sleep(ADD_TIME_TO_IMG_FETCH) # simulate a slower fetch 
     
     image = Image.open(thumbnailName)
-    # File is only required to open the image
+    # File is only necessary to open the image. Delete after use
     removeFile(thumbnailName)
     image.thumbnail(size=(width, height))
 
@@ -167,16 +159,16 @@ def returnMetadata(args):
     # print("Returning metadata")
     return args[EXTRACTED_METADATA]
 
-# @ray.remote
+@resourceWrapperStress()
 def createThumbnail(imgPath, max_size=(100, 100)):
     # print(f"Creating thumbnail for image at ={imgPath}")
     start = time.time()
 
-    imgMRef = extractImgMetadata.remote(imgPath)
-    tfRef = transformMetadata.remote(imgMRef)
-    hRef = handler.remote(tfRef)
-    tRef, imgRef = thumbnail.remote(hRef, imgPath, max_size)
-    rMRef = returnMetadata.remote(tRef)
+    imgMRef = extractImgMetadata.remote(imgPath) # Fetches page + some dictionary manipulation - io + cpu
+    tfRef = transformMetadata.remote(imgMRef)    # dictionary manipulation - pure cpu
+    # hRef = handler.remote(tfRef)                 # currently does nothing
+    tRef, imgRef = thumbnail.remote(tfRef, imgPath, max_size) # Fetches page + makes thumbnail - io + cpu
+    rMRef = returnMetadata.remote(tRef)                      # Only get's a key from dictionary 
     image = ray.get(imgRef)
     metadata = ray.get(rMRef)
     
@@ -197,10 +189,9 @@ def removeFile(filename):
         exit(1)
 
 def main(imgPath):
-    # transformedMetadata = ray.get(createThumbnail.remote(imgPath))
-    createThumbnail(imgPath)
-
-    print("Thumbnailer finished")
+    ctRef = createThumbnail.remote(imgPath)
+    ray.get(ctRef) # wait for function to finish
+    print("Thumbnailer finished!")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PageFetcher on Ray')
@@ -214,20 +205,18 @@ if __name__ == "__main__":
     imgPath = args.imgPath
     desired_SLO = args.desired_SLO
 
-    # runtime_env = {"working_dir": "./assets", "py_modules": ["../ResourceAllocator"], "pip": ["pillow", "bayesian-optimization"]}
-    # runtime_env = {"py_modules": ["../ResourceAllocator"], "pip": ["pillow", "requests", "bayesian-optimization"]}
-    # runtime_env = {"py_modules": ["../ResourceAllocator"]}
-    runtime_env = {}
+    # runtime_env = {"working_dir": "./assets", "py_modules": ["../ResourceAllocator"], "pip": ["pillow"]}
+    runtime_env = {"py_modules": ["../ResourceAllocator"]}
     ray.init(f"ray://127.0.0.1:{LOCAL_PORT}", runtime_env=runtime_env)
     wait_for_nodes(2)
 
-    rManager.optimize(lambda: main(imgPath), SLO=desired_SLO)
-    # main(imgPath)
-
-    # import threading
-    # stop_event = threading.Event()
-    # stressCPU(1, stop_event)
-
+    # RManager.optimize(lambda: main(imgPath), exploration_strategy="BayesianOptSearch", configs_to_test=512, attempts_per_config=5)
+    RManager.optimize(lambda: main(imgPath), 
+                      exploration_strategy="GridSearch", 
+                      per_func_pareto=True, 
+                      cpu_step_size=2, 
+                    #   cpu_step_size=4, 
+                      attempts_per_config=1)
 
     sys.stdout.flush()
     ray.shutdown()

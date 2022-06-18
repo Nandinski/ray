@@ -7,6 +7,10 @@ import os
 import logging
 log = logging.getLogger(__name__)
 
+# FORMAT = "[%(levelname)s] [%(filename)-20s:%(lineno)-s] %(message)s"
+# logging.basicConfig(format=FORMAT, level=os.environ.get("LOGLEVEL", "INFO"))
+
+
 kubernetes.config.load_kube_config()
 RAY_CLUSTER_CONFIG = {
     "group": 'cluster.ray.io',
@@ -16,6 +20,7 @@ RAY_CLUSTER_CONFIG = {
     "name": 'example-cluster'
 }
 RAY_WORKER_SELECTOR = "ray-node-type=worker"
+RUNNING_POD_SELECTOR = "status.phase=Running"
 
 #  Kubernetes clients
 with kubernetes.client.ApiClient() as api_client:
@@ -37,7 +42,7 @@ def validate_cluster_spec(cluster_spec):
 
 
 def get_full_cluster_spec():
-    log.info(f"Obtaining current cluster specification")
+    # log.info(f"Obtaining current cluster specification")
     try:
         cluster_spec = api_instance.get_namespaced_custom_object(**RAY_CLUSTER_CONFIG)
         return cluster_spec
@@ -47,42 +52,45 @@ def get_full_cluster_spec():
     
 
 def get_cluster_spec():
-    log.info(f"Obtaining current cluster specification (simplified)")
+    # log.info(f"Obtaining current cluster specification (simplified)")
     cluster_spec = get_full_cluster_spec()
     
     worker_resources = cluster_spec["spec"]["podTypes"][1]["podConfig"]["spec"]["containers"][0]["resources"]["requests"]
-    simplified_spec = { "num_workers": cluster_spec["spec"]["maxWorkers"], 
-                        "cpu": worker_resources["cpu"],
-                        "memory": worker_resources["memory"]}
-    
+    simplified_spec = make_cluster_config(cluster_spec["spec"]["maxWorkers"], worker_resources["cpu"], worker_resources["memory"])    
     return simplified_spec
 
 def wait_for_new_spec(new_cluster_specification):
     log.info(f"Waiting for cluster config to be {new_cluster_specification}")
     start_time = time.time()
 
-    num_workers = new_cluster_specification["num_workers"]
+    num_desired_workers = new_cluster_specification["num_workers"]
     
-    timeout = 60 # Max time waiting for pod
-    nodes_running = 0
-    for event in w.stream(func=core_v1.list_namespaced_pod,
-                          namespace=RAY_CLUSTER_CONFIG["namespace"],
-                          label_selector=RAY_WORKER_SELECTOR,
-                          timeout_seconds=timeout):
-        if event["object"].status.phase == "Running":
-            resources = event["object"].spec.containers[0].resources.requests
-            # Check if node running has the configuration we want
-            if resources.items() <= new_cluster_specification.items():
-                # log.info(f"Nodes running = {nodes_running}")
-                nodes_running += 1
+    prev_number_workers = -1
+    while(True):
+        list_res = core_v1.list_namespaced_pod(namespace=RAY_CLUSTER_CONFIG["namespace"], label_selector=RAY_WORKER_SELECTOR, field_selector=RUNNING_POD_SELECTOR)
+        pods = list_res.items
 
-        if nodes_running == num_workers:
+        nodes_running_w_expected_config = 0
+        for pod in pods:
+            resources = pod.spec.containers[0].resources.requests
+            # Check if node running has the configuration we want
+            if resources["cpu"] == new_cluster_specification["cpu_per_worker"] and \
+                resources["memory"] == new_cluster_specification["memory_per_worker"]:
+                nodes_running_w_expected_config += 1
+                # log.info(f"Found pod running: {pod.metadata.name}")
+                # log.info(f"Nodes running w/ expected config = {nodes_running_w_expected_config}")
+        
+        if nodes_running_w_expected_config == num_desired_workers:
             end_time = time.time()
             log.info(f"Waited {end_time-start_time:0.2f} sec")
             return
-
-    log.error(f"Time waiting for node count exceeded timeout of {timeout}s")
-    exit(1)
+        else:
+            if nodes_running_w_expected_config != prev_number_workers: 
+                log.info("Number of current workers is different from expected.")
+                log.info(f"Current workers = {nodes_running_w_expected_config}. Desired = {num_desired_workers}")
+                prev_number_workers = nodes_running_w_expected_config
+            
+            time.sleep(1)
     
 def get_node_resources_from_kubernetes_resp(rep):
     return rep
@@ -93,19 +101,19 @@ def change_cluster_spec(new_cluster_config, sync=True):
     cluster_spec = get_full_cluster_spec()
     
     assert int(new_cluster_config["num_workers"]) > 0
-    assert int(new_cluster_config["cpu"]) > 0
-    assert int(new_cluster_config["memory"][:-2]) > 0
+    assert int(new_cluster_config["cpu_per_worker"]) > 0
+    assert int(new_cluster_config["memory_per_worker"][:-2]) > 0
 
     for pod in cluster_spec["spec"]["podTypes"]:
         if pod["name"] == "rayWorkerType":
-            log.info(f"Current worker node count = {pod['maxWorkers']}")
+            # log.info(f"Current worker node count = {pod['maxWorkers']}")
             cluster_spec["spec"]["maxWorkers"] = pod["maxWorkers"] = pod["minWorkers"] = new_cluster_config["num_workers"]
             
             resources = pod["podConfig"]["spec"]["containers"][0]["resources"]
-            log.info(f"Current worker node configuration = {resources['requests']}")
+            # log.info(f"Current worker node configuration = {resources['requests']}")
             for header in ["limits", "requests"]:
-                for resource in ["cpu", "memory"]:
-                    resources[header][resource] = new_cluster_config[resource]            
+                for resourceY, resourceL in [("cpu", "cpu_per_worker"), ("memory", "memory_per_worker")]:
+                    resources[header][resourceY] = new_cluster_config[resourceL]            
             break
 
     validate_cluster_spec(cluster_spec)
@@ -121,4 +129,7 @@ def change_cluster_spec(new_cluster_config, sync=True):
     if sync: 
         wait_for_new_spec(new_cluster_config)
 
-change_cluster_spec({'num_workers': 2, 'cpu': '2', 'memory': '1Gi'})
+def make_cluster_config(worker_count, cpu_per_worker, memory_per_worker="1Gi"):
+    return {"num_workers": int(worker_count), "cpu_per_worker": str(cpu_per_worker), "memory_per_worker": str(memory_per_worker)}
+
+# change_cluster_spec({'num_workers': 2, 'cpu_per_worker': '1', 'memory_per_worker': '1Gi'})

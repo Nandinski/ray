@@ -1,56 +1,62 @@
-from bayes_opt import BayesianOptimization
-class BayesianResourceManager(BaseResourceManager):
-    def optimize(self, func, SLO=None, max_config_attempts=50):
-        print(f"Optimizing function {func.__name__}.")
-        print(f"Configuration: \n {SLO=}\n {max_config_attempts=}\n")
+from .exploration import BaseExplorationStrategy
+from ..cluster_manager import make_cluster_config
+import logging
+log = logging.getLogger(__name__)
 
-        # Calling function to remove startups overhead from ray
-        # func()
-
-        loss = self.get_loss_function(SLO)
-        
-        pbounds = {}
+# from bayes_opt import BayesianOptimization
+from skopt import gp_minimize
+RANDOM_SEED = 14
+class BayesianExplorationStrategy(BaseExplorationStrategy):
+    def explore(self, configs_to_test, attempts_per_config, r_starts=1):
+        f_bounds = {}
         # Set bounds for each remote function CPU
-        for f in self.f_resource_map:
-            pbounds[f"{f}"] = (0.1, 1)
+        for f in self.initial_f_resource_map:
+            f_bounds[f"{f}"] = self.c_range_to_explore.task_cpu_range # TODO change it to be a list of discrete values?
 
-        optimizer = BayesianOptimization(
-            f=lambda **resource_map: self.optimize_function_wrapper(func, resource_map, loss),
-            pbounds=pbounds,
-            verbose=2,
-            random_state=14,
-        )
+        # get function_names
+        f_keys = self.initial_f_resource_map.keys()        
+    
+        bounds = [  self.c_range_to_explore.worker_count_range, 
+                    self.c_range_to_explore.cpu_per_worker_range,
+                    *f_bounds.values()]
+        bounds = list(map(categorize_range_if_need, bounds))
+        log.info(f"{bounds=}")
 
-        prob_cpus = [1, 0.5]
-        probe_points = len(prob_cpus)
-        for probe_point in prob_cpus:
-            probe_full_cpu = [probe_point for _ in range(len(self.f_resource_map))]
-            optimizer.probe( params=probe_full_cpu, lazy=True )        
+        cluster_config = self.initial_cluster_config
+        f_resource_map = self.initial_f_resource_map
+        initial_configuration = [str(cluster_config["num_workers"]), str(cluster_config["cpu_per_worker"]),
+                                 *f_resource_map.values()]
 
-        init_points = 10 - probe_points 
-        optimizer.maximize(init_points=init_points, n_iter=0)
-        bestLoss = optimizer.max
-        print(f"Best configuration found randomly = {bestLoss}")
-        defaultLoss = optimizer.res[0]
+        log.info(f"Initial_configuration = {initial_configuration=}")
 
-        max_config_attempts -= probe_points + init_points
-        n_iter = 1
-        MAX_ATTEMPTS = 20
-        n_attempts = 0
-        for _ in range(max_config_attempts):
-            optimizer.maximize(init_points=0, n_iter=n_iter, acq="poi")
-            currentBest = optimizer.max
-            if currentBest["target"] > bestLoss["target"]:
-                bestLoss = currentBest
-                n_attempts = 0
-                continue
-            n_attempts += n_iter
-            if n_attempts > MAX_ATTEMPTS:
-                print(f"Best configuration was not improved for {n_attempts}. Stopping.")
-                break
-
-        print(f"Configuration with 1vcpu = {defaultLoss}")
-        print(f"Best configuration found = {bestLoss}")
-        print(f"Improvement over 1vcpu = {defaultLoss['target'] - bestLoss['target']}")
+        f_to_minimize = lambda params: self.f_wrapper(params, f_keys, attempts_per_config)
+        res = gp_minimize(  f_to_minimize,              # the function to minimize
+                            bounds,                     # the bounds on each dimension of x
+                            x0= initial_configuration,
+                            acq_func="LCB",             # the acquisition function
+                            n_calls=r_starts + configs_to_test, # the number of evaluations of f
+                            n_initial_points= r_starts, # the number of random initialization points
+                            # noise=0.1**2,             # the noise level (optional)
+                            random_state=RANDOM_SEED)   # the random seed
         
-        # return [[res['params']['nCPU'], i, -res['target']] for i, res in enumerate(optimizer.res)]
+
+    # f_wrapper takes as inputs the list of parameters
+    # parameter order:
+    # node_count, cpu_per_node, task_cpu*
+    def f_wrapper(self, params, f_keys, attempts_per_config):
+        cluster_config = make_cluster_config(params[0], params[1])
+        f_resource_map = make_f_map(f_keys, params[2:])
+        return self.explore_config(cluster_config, f_resource_map, attempts_per_config)
+
+def categorize_range_if_need(range_t):
+    if range_t[0] == range_t[1]:
+        return [str(range_t[0])]
+    else:
+        return range_t
+
+
+def make_f_map(f_keys, f_resources):
+    f_map = {}
+    for i, f in enumerate(f_keys):
+        f_map[f] = round(f_resources[i], 1)
+    return f_map

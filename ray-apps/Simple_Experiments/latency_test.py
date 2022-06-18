@@ -3,9 +3,6 @@ import sys
 import time
 import ray
 
-sys.path.append('/home/nando/PhD/Ray/ray/ray-apps')
-from ResourceAllocator.resource_allocator import RManager, resourceWrapper, resourceWrapperStress
-
 """ Run this script locally to execute a Ray program on your Ray cluster on
 Kubernetes.
 
@@ -31,24 +28,23 @@ def wait_for_nodes(expected):
         else:
             break
 
-@resourceWrapperStress()
-def testFunc():
-    return 0
-
-@resourceWrapperStress()
-def testFunc2():
-    return 0
+@ray.remote
+def testFunc(i):
+    return i
 
 def main():
-    refs = testFunc.remote()
-    refs = testFunc2.remote()
-    v = ray.get(refs)
-    print("Success!")
+    ray.init(f"ray://127.0.0.1:{LOCAL_PORT}")
+    call_count = 10
+
+    time_taken_list = []
+    for i in range(call_count):
+        start = time.time()
+        ray.get(testFunc.remote(i))
+        time_taken = round(time.time() - start, 4)
+        time_taken_list.append(time_taken)
+    print(f"Time taken list = {time_taken_list}")
+    print(f"Average time per remote call = {sum(time_taken_list)/call_count:.2f}s")
+    ray.shutdown()
 
 if __name__ == "__main__":
-    runtime_env = {"py_modules": ["../ResourceAllocator"]}
-    ray.init(f"ray://127.0.0.1:{LOCAL_PORT}", runtime_env=runtime_env)
-
-    RManager.optimize(lambda: main(), exploration_strategy="GridSearch", per_func_pareto=True, configs_to_test=1)
-
-    ray.shutdown()
+    main()
