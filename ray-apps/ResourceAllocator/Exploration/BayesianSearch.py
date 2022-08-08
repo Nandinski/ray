@@ -46,7 +46,8 @@ class BayesianExplorationStrategy(BaseExplorationStrategy):
     def f_wrapper(self, params, f_keys, attempts_per_config):
         cluster_config = make_cluster_config(params[0], params[1])
         f_resource_map = make_f_map(f_keys, params[2:])
-        return self.explore_config(cluster_config, f_resource_map, attempts_per_config)
+        loss, cost = self.explore_config(cluster_config, f_resource_map, attempts_per_config)
+        return loss
 
 def categorize_range_if_need(range_t):
     if range_t[0] == range_t[1]:

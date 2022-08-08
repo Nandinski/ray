@@ -44,7 +44,7 @@ class FunctionRecorder():
         print("Getting median values from FRecorder")
         while(self.received_metrics_count != self.total_invocation_count):
             print(f"Awaiting metrics to arrive. Current received = {self.received_metrics_count}. Expected = {self.total_invocation_count}")
-            time.sleep(0.01)
+            time.sleep(0.05)
         
         median_metrics = self.get_median_metrics()
         

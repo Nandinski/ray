@@ -13,8 +13,8 @@ class GridExplorationStrategy(BaseExplorationStrategy):
 
         # start experimentation using user provided initial configuration?
         log.info(f"Experimenting with the initial configuration")
-        current_best_loss = self.explore_config(cluster_config, f_resource_map, attempts_per_config)
-        log.info(f"Loss obtained using initial configuration = {current_best_loss}")
+        loss, cost = self.explore_config(cluster_config, f_resource_map, attempts_per_config)
+        log.info(f"Loss/Cost obtained using initial configuration = {loss}, {cost}")
 
         nc_min, nc_max = self.c_range_to_explore.worker_count_range
         cn_min, cn_max = self.c_range_to_explore.cpu_per_worker_range
@@ -25,7 +25,7 @@ class GridExplorationStrategy(BaseExplorationStrategy):
                 cluster_config = make_cluster_config(node_count, cpu_per_node)
                 for i, f_r_map in enumerate(f_resource_grid):
                     print(f"Running exp {i} of {len(f_resource_grid)}")
-                    loss = self.explore_config(cluster_config, f_r_map, attempts_per_config)
+                    loss, cost = self.explore_config(cluster_config, f_r_map, attempts_per_config)
 
     def get_resource_grid(self, cpu_step_size, per_func_pareto):
         tc_min, tc_max = self.c_range_to_explore.task_cpu_range

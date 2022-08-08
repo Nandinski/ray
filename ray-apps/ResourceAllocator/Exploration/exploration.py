@@ -159,7 +159,7 @@ class BaseExplorationStrategy():
         cp, cpR = self.get_config_value(cluster_config, f_resource_map) 
         if cpR:
             log.info(f"Requested configuration was already explored, returning previously obtained value.")
-            return cpR.loss_value
+            return cpR.loss_value, cpR.cost_to_run
 
         log.info(f"Experimenting with cluster_config:\n{cluster_config}")
         log.info(f"Function resource map:\n{f_resource_map}")
@@ -172,7 +172,16 @@ class BaseExplorationStrategy():
         config_summary = self.make_config_summary(cp)
 
         log.info(f"Reported loss = {config_summary.loss_value}")
-        return config_summary.loss_value
+        log.info(f"Reported cost = {config_summary.cost_to_run}")
+        return config_summary.loss_value, config_summary.cost_to_run
+
+    def experiment_w_initial_config(self, attempts_per_config):
+        # Experimenting with the initial configuration
+        cluster_config = self.initial_cluster_config
+        f_resource_map = self.initial_f_resource_map
+        # start experimentation using user provided initial configuration?
+        log.info(f"Experimenting with the initial configuration")
+        loss, cost = self.explore_config(cluster_config, f_resource_map, attempts_per_config)
 
     def save_configs_to_file(self, filename):
         with open(filename + ".txt", 'w') as f:
@@ -181,6 +190,10 @@ class BaseExplorationStrategy():
             f.write(f"Time taken = {self.time_to_search}s\n")
 
     def save_configs_to_csv_file(self, filename):
+        if len(self.configurations) == 0:
+            print("No configurations explored.")
+            return
+
         list_df = []
         config_point, config_point_result_list = list(self.configurations.items())[0]
         c_config_columns = [("cluster_config", c) for c in dict(config_point.cluster_config).keys()]

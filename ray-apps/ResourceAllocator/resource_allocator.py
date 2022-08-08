@@ -1,3 +1,4 @@
+from sqlalchemy import false
 from . import cluster_manager
 from datetime import datetime
 import os
@@ -8,15 +9,19 @@ log = logging.getLogger(__name__)
 # configure logging
 FORMAT = "[%(levelname)s] [%(filename)-20s:%(lineno)-s] %(message)s"
 logging.basicConfig(format=FORMAT, level=os.environ.get("LOGLEVEL", "INFO"))
-logging.disable()
+# logging.disable()
 
 from .Exploration.NullExploration import NullExplorationStrategy
 from .Exploration.GridSearch import GridExplorationStrategy
 from .Exploration.BayesianSearch import BayesianExplorationStrategy
+from .Exploration.OPTUNASearch import OPTUNASearchStrategy
+# from .Exploration.OPTUNASearch import GPFLOWOPTSearchStrategy
 resource_Exploration_Strategies = {
     "NullExploration": NullExplorationStrategy,
     "GridSearch": GridExplorationStrategy,
     "BayesianOptSearch": BayesianExplorationStrategy,
+    "OPTUNASearch": OPTUNASearchStrategy,
+    # "GPFLOWOPTSearch": GPFLOWOPTSearchStrategy,
 }
 
 from .utils import Singleton
@@ -25,14 +30,26 @@ class ResourceManager(metaclass=Singleton):
         self.initial_f_resource_map = {}
         self.cls_mapper = {}
 
-    def register(self, func_name, initial_ncpus, cls_ptr):
+        self.unoptimize_cls_mapper = {}
+        self.unopt_initial_f_resource_map = {}
+
+    def register(self, func_name, initial_ncpus, cls_ptr, optimize):
         log.info(f"Registering function {func_name}")
-        self.initial_f_resource_map[func_name] = initial_ncpus
-        self.cls_mapper[func_name] = cls_ptr
+        if optimize:
+            self.cls_mapper[func_name] = cls_ptr
+            self.initial_f_resource_map[func_name] = initial_ncpus
+        else:
+            self.unoptimize_cls_mapper[func_name] = cls_ptr
+            self.unopt_initial_f_resource_map[func_name] = initial_ncpus
 
     def update_f_resources(self, f_resource_map):
         for func_name, cls_ptr in self.cls_mapper.items():
             f_resources = {"num_cpus": f_resource_map[func_name]}
+            cls_ptr.update_resources(f_resources)
+
+        # Force ray to regenerate function
+        for func_name, cls_ptr in self.unoptimize_cls_mapper.items():
+            f_resources = {"num_cpus": self.unopt_initial_f_resource_map[func_name]}
             cls_ptr.update_resources(f_resources)
 
     def update_fuction_wrappers_func(self, function_wrapper, *args, **kwargs):
@@ -111,6 +128,7 @@ def resourceWrapper(func):
 
 from . import resource_isolation_simulator
 
+import ray
 def resourceWrapperStress(*args, **kwargs):
     def decorator(func):
         print(f"Resource wraping (w/stress) function {func.__name__}.")
@@ -132,9 +150,10 @@ def resourceWrapperStress(*args, **kwargs):
                 # print(f"Updated function resources: {self.resources}")
                 # print(f"Updated resources of {func.__name__} to {self.resources}")
         
+        optimize = kwargs.pop("optimize", True)
         num_cpus = kwargs.get("num_cpus", 1)
         fw = FuncWrapper(func, num_cpus)
-        RManager.register(func.__name__, num_cpus, fw)
+        RManager.register(func.__name__, num_cpus, fw, optimize)
         return fw
 
     # This is the case where the outside decorator receives the function

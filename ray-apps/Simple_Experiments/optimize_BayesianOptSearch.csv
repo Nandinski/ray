@@ -1,6 +1,0 @@
-cluster_config,cluster_config,cluster_config,function_resource_map,function_resource_map,config_point_result,config_point_result,config_point_result,config_point_result
-num_workers,cpu_per_worker,memory_per_worker,testFunc,testFunc2,loss_used,loss_value,execution_time,cost_to_run
-2,1,1Gi,1.0,1.0,latency_loss,1.09,1.09,2.18
-3,1,1Gi,0.1,0.1,latency_loss,0.019,0.019,0.056999999999999995
-2,1,1Gi,0.2,1.0,latency_loss,0.019,0.019,0.038
-3,1,1Gi,0.5,0.1,latency_loss,0.02,0.02,0.06

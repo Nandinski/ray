@@ -159,7 +159,7 @@ def returnMetadata(args):
     # print("Returning metadata")
     return args[EXTRACTED_METADATA]
 
-@resourceWrapperStress()
+@resourceWrapperStress(optimize=False)
 def createThumbnail(imgPath, max_size=(100, 100)):
     # print(f"Creating thumbnail for image at ={imgPath}")
     start = time.time()
@@ -213,10 +213,12 @@ if __name__ == "__main__":
     # RManager.optimize(lambda: main(imgPath), exploration_strategy="BayesianOptSearch", configs_to_test=512, attempts_per_config=5)
     RManager.optimize(lambda: main(imgPath), 
                       exploration_strategy="GridSearch", 
-                      per_func_pareto=True, 
-                      cpu_step_size=2, 
-                    #   cpu_step_size=4, 
-                      attempts_per_config=1)
+                    #   per_func_pareto=True, 
+                      cpu_step_size=4, 
+                      attempts_per_config=5)
+
+    # RManager.optimize(lambda: main(imgPath), exploration_strategy="OPTUNASearch", configs_to_test=128, attempts_per_config=5)
+
 
     sys.stdout.flush()
     ray.shutdown()

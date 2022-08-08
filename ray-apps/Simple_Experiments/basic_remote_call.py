@@ -1,3 +1,4 @@
+from pickletools import optimize
 from re import X
 import sys
 import time
@@ -31,7 +32,7 @@ def wait_for_nodes(expected):
         else:
             break
 
-@resourceWrapperStress()
+@ray.remote
 def testFunc():
     return 0
 
@@ -49,6 +50,7 @@ if __name__ == "__main__":
     runtime_env = {"py_modules": ["../ResourceAllocator"]}
     ray.init(f"ray://127.0.0.1:{LOCAL_PORT}", runtime_env=runtime_env)
 
-    RManager.optimize(lambda: main(), exploration_strategy="GridSearch", per_func_pareto=True, configs_to_test=1)
+    # RManager.optimize(lambda: main(), exploration_strategy="GridSearch", per_func_pareto=True, configs_to_test=1)
+    RManager.optimize(lambda: main(), exploration_strategy="OPTUNASearch", per_func_pareto=True, configs_to_test=1, timeout=None)
 
     ray.shutdown()
